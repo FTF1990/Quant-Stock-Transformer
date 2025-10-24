@@ -1171,9 +1171,20 @@ def train_base_model_ui(
         # 应用IFD平滑（如果需要）
         if apply_smoothing and temporal_signals:
             log_messages.append(f"\n🔧 应用IFD平滑...")
-            for sig in temporal_signals:
-                if sig in df.columns:
-                    df[sig] = apply_ifd_smoothing(df[sig].values)
+            # Apply smoothing to the full y array for specified temporal signals
+            y_smoothed = apply_ifd_smoothing(
+                y_data=y,
+                target_sensors=target_signals,
+                ifd_sensor_names=temporal_signals,
+                window_length=15,
+                polyorder=3
+            )
+            # Update y with smoothed values
+            y = y_smoothed
+            # Update df with smoothed target signals
+            for i, sig in enumerate(target_signals):
+                df[sig] = y[:, i]
+            log_messages.append(f"  已对 {len(temporal_signals)} 个时序信号应用平滑")
 
         # 数据分割
         train_size = int(len(X) * (1 - test_size - val_size))
