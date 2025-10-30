@@ -422,6 +422,48 @@ global_state = {
     'sundial_models': {},  # Sundial time series prediction model
 }
 
+
+# ============================================================================
+# Colab Auto-load Support
+# ============================================================================
+def autoload_colab_data():
+    """
+    Automatically load pre-defined data from Colab environment
+
+    This function checks for pre-saved CSV files and automatically loads them
+    into global_state, making them immediately available in Tab1.
+    """
+    preload_paths = [
+        'data/colab_preloaded_data.csv',
+        'data/test_data.csv',
+        '/content/colab_data.csv'
+    ]
+
+    for preload_path in preload_paths:
+        if os.path.exists(preload_path):
+            try:
+                df_auto = pd.read_csv(preload_path)
+                global_state['df'] = df_auto
+                global_state['data_loaded'] = True
+
+                print("=" * 80)
+                print("✅✅✅ [Colab Auto-load] Data successfully loaded into Tab1! ✅✅✅")
+                print(f"📊 Data shape: {df_auto.shape}")
+                print(f"📋 Columns: {list(df_auto.columns)}")
+                print(f"📁 Source: {preload_path}")
+                print("=" * 80)
+
+                return df_auto
+            except Exception as e:
+                print(f"⚠️ [Colab Auto-load] Failed to load {preload_path}: {e}")
+                continue
+
+    return None
+
+# Try to auto-load data (for Colab environment)
+autoload_colab_data()
+
+
 load_saved_models()
 
 plt.style.use('default')
@@ -1101,11 +1143,44 @@ def load_data_from_csv(file_obj):
 
         signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
 
-        return status, df, signals_display
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
 
     except Exception as e:
         error_msg = f"❌ 数据加载失败: {str(e)}"
         return error_msg, None, ""
+
+
+def check_preloaded_data():
+    """
+    Check if data was pre-loaded (from Colab) and return its status
+
+    Returns:
+        status: Status message
+        preview_df: Data preview (first 100 rows)
+        signals_display: Available signals
+    """
+    if global_state.get('df') is not None:
+        df = global_state['df']
+
+        status = f"✅ [Colab预加载] 数据已自动加载!\n\n"
+        status += f"📊 数据维度: {df.shape}\n"
+        status += f"📈 样本数: {len(df):,}\n"
+        status += f"🎯 特征数: {len(df.columns)}\n\n"
+        status += f"列名: {', '.join(df.columns[:5].tolist())}"
+        if len(df.columns) > 5:
+            status += f"... (共{len(df.columns)}列)"
+
+        signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
+
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
+    else:
+        return "⚠️ 尚未加载数据，请上传CSV或创建示例数据", None, ""
 
 
 def create_sample_data():
@@ -1141,7 +1216,10 @@ def create_sample_data():
 
         signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
 
-        return status, df, signals_display
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
 
     except Exception as e:
         error_msg = f"❌ 示例数据创建失败: {str(e)}"
@@ -1596,6 +1674,14 @@ def create_unified_interface():
                     with gr.Column(scale=1):
                         data_status = gr.Textbox(label="数据状态", lines=10, interactive=False)
                         signals_display = gr.Textbox(label="可用信号", lines=10, interactive=False)
+
+                # Data preview table
+                with gr.Row():
+                    data_preview = gr.Dataframe(
+                        label="📊 数据预览 (前100行)",
+                        interactive=False,
+                        wrap=True
+                    )
 
             # Tab 2: SST模型Training
             with gr.Tab("🎯 SST模型Training", elem_id="sst_training"):
@@ -2128,41 +2214,67 @@ def create_unified_interface():
         """)
 
         # Auto refresh dropdowns on page load
+        # Initial load: populate dropdowns and check for pre-loaded data
+        def initial_load():
+            """Load initial state including pre-loaded data from Colab"""
+            # Get dropdown choices
+            models = get_available_models()
+            residual_keys = get_residual_data_keys()
+            stage2_keys = get_stage2_model_keys()
+            ensemble_keys = get_ensemble_model_keys()
+
+            # Check for pre-loaded data
+            status, preview_df, signals = check_preloaded_data()
+
+            # Get column choices if data exists
+            if global_state.get('df') is not None:
+                cols = list(global_state['df'].columns)
+            else:
+                cols = []
+
+            return (
+                gr.update(choices=models),
+                gr.update(choices=residual_keys),
+                gr.update(choices=stage2_keys),
+                gr.update(choices=ensemble_keys),
+                status, signals, preview_df,
+                gr.update(choices=cols), gr.update(choices=cols)
+            )
+
         demo.load(
-            fn=lambda: (
-                gr.update(choices=get_available_models()),
-                gr.update(choices=get_residual_data_keys()),
-                gr.update(choices=get_stage2_model_keys()),
-                gr.update(choices=get_ensemble_model_keys())
-            ),
-            outputs=[model_selector, residual_data_selector_stage2,
-                     stage2_model_selector, ensemble_selector_reinf]
+            fn=initial_load,
+            outputs=[
+                model_selector, residual_data_selector_stage2,
+                stage2_model_selector, ensemble_selector_reinf,
+                data_status, signals_display, data_preview,
+                boundary_signals_static, target_signals_static
+            ]
         )
 
         # Data loading events
         def load_data_and_update(file_obj):
-            status, df, signals = load_data_from_csv(file_obj)
-            if df is not None:
-                cols = list(df.columns)
+            status, preview_df, signals = load_data_from_csv(file_obj)
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
                 return (
-                    status, signals,
+                    status, signals, preview_df,
                     gr.update(choices=cols), gr.update(choices=cols)
                 )
             return (
-                status, signals,
+                status, signals, None,
                 gr.update(choices=[]), gr.update(choices=[])
             )
 
         def create_sample_and_update():
-            status, df, signals = create_sample_data()
-            if df is not None:
-                cols = list(df.columns)
+            status, preview_df, signals = create_sample_data()
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
                 return (
-                    status, signals,
+                    status, signals, preview_df,
                     gr.update(choices=cols), gr.update(choices=cols)
                 )
             return (
-                status, signals,
+                status, signals, None,
                 gr.update(choices=[]), gr.update(choices=[])
             )
 
@@ -2170,7 +2282,7 @@ def create_unified_interface():
             fn=load_data_and_update,
             inputs=[data_file],
             outputs=[
-                data_status, signals_display,
+                data_status, signals_display, data_preview,
                 boundary_signals_static, target_signals_static
             ]
         )
@@ -2178,7 +2290,7 @@ def create_unified_interface():
         sample_btn.click(
             fn=create_sample_and_update,
             outputs=[
-                data_status, signals_display,
+                data_status, signals_display, data_preview,
                 boundary_signals_static, target_signals_static
             ]
         )
