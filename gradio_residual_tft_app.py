@@ -1200,23 +1200,28 @@ def get_available_csv_files():
     Get list of available CSV files in data/ folder
 
     Returns:
-        List of CSV file paths
+        List of CSV file paths (safe - never raises exceptions)
     """
-    import glob
+    try:
+        import glob
 
-    csv_files = []
+        csv_files = []
 
-    # Search in data/ folder
-    if os.path.exists('data'):
-        csv_files.extend(glob.glob('data/*.csv'))
+        # Search in data/ folder
+        if os.path.exists('data'):
+            csv_files.extend(glob.glob('data/*.csv'))
 
-    # Search in current directory
-    csv_files.extend(glob.glob('*.csv'))
+        # Search in current directory
+        csv_files.extend(glob.glob('*.csv'))
 
-    # Sort by modification time (newest first)
-    csv_files = sorted(csv_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+        # Sort by modification time (newest first)
+        csv_files = sorted(csv_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
 
-    return csv_files if csv_files else ["(no CSV files found)"]
+        return csv_files if csv_files else []
+
+    except Exception as e:
+        print(f"⚠️ Error in get_available_csv_files: {e}")
+        return []  # Return empty list on error
 
 
 def load_csv_from_path(csv_path):
@@ -1785,9 +1790,9 @@ def create_unified_interface():
                     with gr.Column(scale=1):
                         gr.Markdown("### 📁 选择已有CSV文件")
                         csv_file_selector = gr.Dropdown(
-                            choices=get_available_csv_files(),
+                            choices=[],  # Empty initially, populated on page load
                             label="选择data文件夹下的CSV文件",
-                            info="自动检测data/目录和当前目录下的CSV文件"
+                            info="点击'刷新列表'来加载可用的CSV文件"
                         )
                         with gr.Row():
                             select_csv_btn = gr.Button("📂 加载选中文件", variant="primary", size="lg")
@@ -2352,7 +2357,10 @@ def create_unified_interface():
             stage2_keys = get_stage2_model_keys()
             ensemble_keys = get_ensemble_model_keys()
 
-            # Check for pre-loaded data
+            # Get available CSV files (safe - won't break interface)
+            csv_files = get_available_csv_files()
+
+            # Check for pre-loaded data (but don't auto-load)
             status, preview_df, signals = check_preloaded_data()
 
             # Get column choices if data exists
@@ -2366,6 +2374,7 @@ def create_unified_interface():
                 gr.update(choices=residual_keys),
                 gr.update(choices=stage2_keys),
                 gr.update(choices=ensemble_keys),
+                gr.update(choices=csv_files),  # Populate CSV file selector
                 status, signals, preview_df,
                 gr.update(choices=cols), gr.update(choices=cols)
             )
@@ -2375,6 +2384,7 @@ def create_unified_interface():
             outputs=[
                 model_selector, residual_data_selector_stage2,
                 stage2_model_selector, ensemble_selector_reinf,
+                csv_file_selector,  # Add CSV file selector to outputs
                 data_status, signals_display, data_preview,
                 boundary_signals_static, target_signals_static
             ]
