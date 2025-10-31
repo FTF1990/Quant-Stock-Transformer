@@ -432,24 +432,65 @@ def autoload_colab_data():
 
     This function checks for pre-saved CSV files and automatically loads them
     into global_state, making them immediately available in Tab1.
+
+    Supports:
+    - Standard predefined paths
+    - Environment variable: COLAB_DATA_PATH
+    - Wildcard matching in data/ folder
+    - Google Drive mounted paths
     """
-    preload_paths = [
-        'data/colab_preloaded_data.csv',
-        'data/test_data.csv',
-        '/content/colab_data.csv'
-    ]
+    import glob
+
+    # Priority 1: Environment variable
+    env_path = os.environ.get('COLAB_DATA_PATH')
+    if env_path and os.path.exists(env_path):
+        preload_paths = [env_path]
+    else:
+        # Priority 2: Standard predefined paths
+        preload_paths = [
+            'data/colab_preloaded_data.csv',
+            'data/test_data.csv',
+            '/content/colab_data.csv',
+            # Add more common names
+            'data/leap_data.csv',
+            'data/sensor_data.csv',
+            'data/training_data.csv',
+            # Google Drive paths
+            '/content/drive/MyDrive/data.csv',
+            '/content/drive/MyDrive/colab_data.csv',
+        ]
+
+        # Priority 3: Wildcard search in data/ folder
+        if os.path.exists('data'):
+            csv_files = glob.glob('data/*.csv')
+            if csv_files:
+                # Add all CSV files in data/ folder
+                preload_paths.extend(csv_files)
 
     for preload_path in preload_paths:
         if os.path.exists(preload_path):
             try:
                 df_auto = pd.read_csv(preload_path)
+
+                # Validate: must have at least 2 columns
+                if df_auto.shape[1] < 2:
+                    print(f"⚠️ [Colab Auto-load] Skipping {preload_path}: too few columns")
+                    continue
+
+                # Validate: must have at least 10 rows
+                if df_auto.shape[0] < 10:
+                    print(f"⚠️ [Colab Auto-load] Skipping {preload_path}: too few rows")
+                    continue
+
                 global_state['df'] = df_auto
                 global_state['data_loaded'] = True
 
                 print("=" * 80)
                 print("✅✅✅ [Colab Auto-load] Data successfully loaded into Tab1! ✅✅✅")
                 print(f"📊 Data shape: {df_auto.shape}")
-                print(f"📋 Columns: {list(df_auto.columns)}")
+                print(f"📋 Columns: {list(df_auto.columns)[:10]}")  # Show first 10 columns
+                if df_auto.shape[1] > 10:
+                    print(f"    ... and {df_auto.shape[1] - 10} more columns")
                 print(f"📁 Source: {preload_path}")
                 print("=" * 80)
 
@@ -460,8 +501,9 @@ def autoload_colab_data():
 
     return None
 
-# Try to auto-load data (for Colab environment)
-autoload_colab_data()
+# Auto-load disabled - user can manually select files in Tab1
+# To enable auto-load, uncomment the line below:
+# autoload_colab_data()
 
 
 load_saved_models()
@@ -1153,6 +1195,80 @@ def load_data_from_csv(file_obj):
         return error_msg, None, ""
 
 
+def get_available_csv_files():
+    """
+    Get list of available CSV files in data/ folder
+
+    Returns:
+        List of CSV file paths
+    """
+    import glob
+
+    csv_files = []
+
+    # Search in data/ folder
+    if os.path.exists('data'):
+        csv_files.extend(glob.glob('data/*.csv'))
+
+    # Search in current directory
+    csv_files.extend(glob.glob('*.csv'))
+
+    # Sort by modification time (newest first)
+    csv_files = sorted(csv_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+
+    return csv_files if csv_files else ["(no CSV files found)"]
+
+
+def load_csv_from_path(csv_path):
+    """
+    Load CSV file from a given path
+
+    Args:
+        csv_path: Path to CSV file
+
+    Returns:
+        status: Status message
+        preview_df: Data preview (first 100 rows)
+        signals: Available signals
+    """
+    if not csv_path or csv_path == "(no CSV files found)":
+        return "❌ 请选择有效的CSV文件", None, ""
+
+    if not os.path.exists(csv_path):
+        return f"❌ 文件不存在: {csv_path}", None, ""
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        # If there are unnamed columns, set as index
+        if 'Unnamed: 0' in df.columns:
+            df = df.set_index('Unnamed: 0')
+            df.index.name = 'index'
+        elif df.index.name is None:
+            df.index.name = 'index'
+
+        global_state['df'] = df
+        global_state['all_signals'] = list(df.columns)
+
+        status = f"✅ 数据加载成功!\n\n"
+        status += f"📁 文件: {csv_path}\n"
+        status += f"📊 数据维度: {df.shape}\n"
+        status += f"📈 样本数: {len(df):,}\n"
+        status += f"🎯 特征数: {len(df.columns)}\n\n"
+        status += f"前5列: {', '.join(df.columns[:5].tolist())}"
+
+        signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
+
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
+
+    except Exception as e:
+        error_msg = f"❌ 数据加载失败: {str(e)}"
+        return error_msg, None, ""
+
+
 def check_preloaded_data():
     """
     Check if data was pre-loaded (from Colab) and return its status
@@ -1165,7 +1281,7 @@ def check_preloaded_data():
     if global_state.get('df') is not None:
         df = global_state['df']
 
-        status = f"✅ [Colab预加载] 数据已自动加载!\n\n"
+        status = f"✅ [预加载] 数据已加载!\n\n"
         status += f"📊 数据维度: {df.shape}\n"
         status += f"📈 样本数: {len(df):,}\n"
         status += f"🎯 特征数: {len(df.columns)}\n\n"
@@ -1180,7 +1296,7 @@ def check_preloaded_data():
 
         return status, preview_df, signals_display
     else:
-        return "⚠️ 尚未加载数据，请上传CSV或创建示例数据", None, ""
+        return "⚠️ 尚未加载数据，请选择CSV文件、上传文件或创建示例数据", None, ""
 
 
 def create_sample_data():
@@ -1663,13 +1779,26 @@ def create_unified_interface():
         with gr.Tabs():
             # Tab 1: 数据加载
             with gr.Tab("📂 数据加载", elem_id="data_loading"):
-                gr.Markdown("## 上传数据或创建示例数据")
+                gr.Markdown("## 选择、上传或创建数据")
 
                 with gr.Row():
                     with gr.Column(scale=1):
+                        gr.Markdown("### 📁 选择已有CSV文件")
+                        csv_file_selector = gr.Dropdown(
+                            choices=get_available_csv_files(),
+                            label="选择data文件夹下的CSV文件",
+                            info="自动检测data/目录和当前目录下的CSV文件"
+                        )
+                        with gr.Row():
+                            select_csv_btn = gr.Button("📂 加载选中文件", variant="primary", size="lg")
+                            refresh_csv_btn = gr.Button("🔄 刷新列表", size="sm")
+
+                        gr.Markdown("### 📤 或上传CSV文件")
                         data_file = gr.File(label="上传CSV文件", file_types=['.csv'])
-                        load_btn = gr.Button("📥 加载数据", variant="primary", size="lg")
-                        sample_btn = gr.Button("🎲 Create sample data", size="lg")
+                        upload_btn = gr.Button("📥 加载上传文件", variant="secondary", size="lg")
+
+                        gr.Markdown("### 🎲 或创建示例数据")
+                        sample_btn = gr.Button("🎲 创建示例数据", size="lg")
 
                     with gr.Column(scale=1):
                         data_status = gr.Textbox(label="数据状态", lines=10, interactive=False)
@@ -2278,7 +2407,37 @@ def create_unified_interface():
                 gr.update(choices=[]), gr.update(choices=[])
             )
 
-        load_btn.click(
+        # CSV file selector event - load from data/ folder
+        def load_from_selector_and_update(csv_path):
+            status, preview_df, signals = load_csv_from_path(csv_path)
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
+                return (
+                    status, signals, preview_df,
+                    gr.update(choices=cols), gr.update(choices=cols)
+                )
+            return (
+                status, signals, None,
+                gr.update(choices=[]), gr.update(choices=[])
+            )
+
+        select_csv_btn.click(
+            fn=load_from_selector_and_update,
+            inputs=[csv_file_selector],
+            outputs=[
+                data_status, signals_display, data_preview,
+                boundary_signals_static, target_signals_static
+            ]
+        )
+
+        # Refresh CSV file list
+        refresh_csv_btn.click(
+            fn=lambda: gr.update(choices=get_available_csv_files()),
+            outputs=[csv_file_selector]
+        )
+
+        # Upload button event - load from uploaded file
+        upload_btn.click(
             fn=load_data_and_update,
             inputs=[data_file],
             outputs=[
@@ -2287,6 +2446,7 @@ def create_unified_interface():
             ]
         )
 
+        # Sample button event - create sample data
         sample_btn.click(
             fn=create_sample_and_update,
             outputs=[
