@@ -2316,27 +2316,54 @@ def create_unified_interface():
 # Launch application
 
 if __name__ == "__main__":
-    print("启动工业数字孪生残差Boost训练系统...")
-    demo = create_unified_interface()
-    print("界面创建完成，启动服务器...")
+    import sys
 
-    for port in range(7860, 7870):
-        try:
-            print(f"尝试端口 {port}...")
-            demo.launch(
-                server_name="127.0.0.1",
-                server_port=port,
-                share=False,
-                debug=True,
-                show_error=True,
-                quiet=False
-            )
-            print(f"服务器启动成功！")
-            print(f"访问地址: http://localhost:{port}")
-            print("=" * 80)
-            break
-        except OSError:
-            print(f"端口 {port} 被占用，尝试下一个...")
-            continue
+    print("启动工业数字孪生残差Boost训练系统...")
+    print("="*80)
+
+    # Check if running in Colab
+    try:
+        import google.colab
+        IN_COLAB = True
+        print("✅ 检测到Colab环境")
+    except:
+        IN_COLAB = False
+        print("✅ 本地环境")
+
+    demo = create_unified_interface()
+    print("✅ 界面创建完成")
+    print("="*80)
+
+    if IN_COLAB:
+        # Colab environment - use share=True for public URL
+        print("\n🌐 在Colab中启动Gradio...")
+        print("📝 提示：Gradio将生成一个公网链接")
+        demo.launch(
+            share=True,
+            debug=True,
+            show_error=True,
+            inline=False  # Use separate window
+        )
     else:
-        print("无法找到可用端口 (7860-7869)")
+        # Local environment - try multiple ports
+        print("\n🌐 在本地环境中启动Gradio...")
+        for port in range(7860, 7870):
+            try:
+                print(f"尝试端口 {port}...")
+                demo.launch(
+                    server_name="127.0.0.1",
+                    server_port=port,
+                    share=False,
+                    debug=True,
+                    show_error=True,
+                    quiet=False
+                )
+                print(f"✅ 服务器启动成功！")
+                print(f"🔗 访问地址: http://localhost:{port}")
+                print("="*80)
+                break
+            except OSError:
+                print(f"⚠️  端口 {port} 被占用，尝试下一个...")
+                continue
+        else:
+            print("❌ 无法找到可用端口 (7860-7869)")
