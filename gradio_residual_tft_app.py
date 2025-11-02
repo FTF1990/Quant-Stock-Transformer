@@ -13,6 +13,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import autocast, GradScaler
 from typing import Dict, List, Tuple, Any, Optional
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 import sys
@@ -173,7 +174,7 @@ def load_tft_model_from_config(config_file_path: str, device: torch.device) -> T
             return None, f"❌ Scaler文件不存在: {scaler_path}"
 
         # Load model
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         model_config = checkpoint['model_config']
 
         # Rebuild TFT model
@@ -283,7 +284,14 @@ try:
         GroupedMultiTargetTFT,
         ResidualExtractor,
         train_residual_tft,
-        prepare_residual_sequence_data
+        prepare_residual_sequence_data,
+        compute_r2_safe,
+        compute_residuals_correctly,
+        batch_inference,
+        inference_with_boosting,
+        compute_per_signal_metrics,
+        clear_gpu_memory,
+        print_gpu_memory
     )
     from models.utils import apply_ifd_smoothing
 
@@ -298,7 +306,14 @@ except ImportError as e:
             GroupedMultiTargetTFT,
             ResidualExtractor,
             train_residual_tft,
-            prepare_residual_sequence_data
+            prepare_residual_sequence_data,
+            compute_r2_safe,
+            compute_residuals_correctly,
+            batch_inference,
+            inference_with_boosting,
+            compute_per_signal_metrics,
+            clear_gpu_memory,
+            print_gpu_memory
         )
         from utils import apply_ifd_smoothing
 
@@ -344,7 +359,7 @@ def load_saved_models():
             scaler_path = os.path.join(model_dir, f"{model_name}_scalers.pkl")
 
             try:
-                checkpoint = torch.load(model_path, map_location=device)
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
                 model_config = checkpoint['model_config']
 
                 if model_config['type'] == 'StaticSensorTransformer':
@@ -406,6 +421,90 @@ global_state = {
     'ensemble_models': {},  # Ensemble inference model (SST + Stage2)
     'sundial_models': {},  # Sundial time series prediction model
 }
+
+
+# ============================================================================
+# Colab Auto-load Support
+# ============================================================================
+def autoload_colab_data():
+    """
+    Automatically load pre-defined data from Colab environment
+
+    This function checks for pre-saved CSV files and automatically loads them
+    into global_state, making them immediately available in Tab1.
+
+    Supports:
+    - Standard predefined paths
+    - Environment variable: COLAB_DATA_PATH
+    - Wildcard matching in data/ folder
+    - Google Drive mounted paths
+    """
+    import glob
+
+    # Priority 1: Environment variable
+    env_path = os.environ.get('COLAB_DATA_PATH')
+    if env_path and os.path.exists(env_path):
+        preload_paths = [env_path]
+    else:
+        # Priority 2: Standard predefined paths
+        preload_paths = [
+            'data/colab_preloaded_data.csv',
+            'data/test_data.csv',
+            '/content/colab_data.csv',
+            # Add more common names
+            'data/leap_data.csv',
+            'data/sensor_data.csv',
+            'data/training_data.csv',
+            # Google Drive paths
+            '/content/drive/MyDrive/data.csv',
+            '/content/drive/MyDrive/colab_data.csv',
+        ]
+
+        # Priority 3: Wildcard search in data/ folder
+        if os.path.exists('data'):
+            csv_files = glob.glob('data/*.csv')
+            if csv_files:
+                # Add all CSV files in data/ folder
+                preload_paths.extend(csv_files)
+
+    for preload_path in preload_paths:
+        if os.path.exists(preload_path):
+            try:
+                df_auto = pd.read_csv(preload_path)
+
+                # Validate: must have at least 2 columns
+                if df_auto.shape[1] < 2:
+                    print(f"⚠️ [Colab Auto-load] Skipping {preload_path}: too few columns")
+                    continue
+
+                # Validate: must have at least 10 rows
+                if df_auto.shape[0] < 10:
+                    print(f"⚠️ [Colab Auto-load] Skipping {preload_path}: too few rows")
+                    continue
+
+                global_state['df'] = df_auto
+                global_state['data_loaded'] = True
+
+                print("=" * 80)
+                print("✅✅✅ [Colab Auto-load] Data successfully loaded into Tab1! ✅✅✅")
+                print(f"📊 Data shape: {df_auto.shape}")
+                print(f"📋 Columns: {list(df_auto.columns)[:10]}")  # Show first 10 columns
+                if df_auto.shape[1] > 10:
+                    print(f"    ... and {df_auto.shape[1] - 10} more columns")
+                print(f"📁 Source: {preload_path}")
+                print("=" * 80)
+
+                return df_auto
+            except Exception as e:
+                print(f"⚠️ [Colab Auto-load] Failed to load {preload_path}: {e}")
+                continue
+
+    return None
+
+# Auto-load disabled - user can manually select files in Tab1
+# To enable auto-load, uncomment the line below:
+# autoload_colab_data()
+
 
 load_saved_models()
 
@@ -486,7 +585,7 @@ def load_model_from_inference_config(config_file_path, device):
             return None, f"❌ Scaler文件不存在: {scaler_path}"
 
         # Load model
-        checkpoint = torch.load(model_path, map_location=device)
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
         arch = config['architecture']
 
         if model_type == 'StaticSensorTransformer':
@@ -662,21 +761,26 @@ def train_stage2_boost_model(
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode='min',
-            factor=0.5,
-            patience=config.get('scheduler_patience', 10),
-            verbose=True
+            factor=config.get('scheduler_factor', 0.7),
+            patience=config.get('scheduler_patience', 15)
         )
+        log_msg.append(f"📊 学习率调度器: ReduceLROnPlateau (factor={config.get('scheduler_factor', 0.7)}, patience={config.get('scheduler_patience', 15)})")
 
         criterion = nn.MSELoss()
 
+        # Mixed precision training
+        scaler = GradScaler()
+
         # Training loop
-        log_msg.append(f"\n🎯 开始训练 (总轮数: {config['epochs']})")
+        log_msg.append(f"\n🎯 开始训练 (混合精度, 总轮数: {config['epochs']})")
 
         history = {
             'train_losses': [],
             'val_losses': [],
             'train_r2': [],
-            'val_r2': []
+            'val_r2': [],
+            'train_mae': [],
+            'val_mae': []
         }
 
         best_val_loss = float('inf')
@@ -684,7 +788,7 @@ def train_stage2_boost_model(
         early_stop_patience = config.get('early_stop_patience', 25)
 
         for epoch in range(config['epochs']):
-            # Training phase
+            # Training phase with mixed precision
             stage2_model.train()
             train_loss = 0.0
             train_preds = []
@@ -694,15 +798,22 @@ def train_stage2_boost_model(
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
 
                 optimizer.zero_grad()
-                outputs = stage2_model(batch_X)
-                loss = criterion(outputs, batch_y)
-                loss.backward()
+
+                # Mixed precision forward pass
+                with autocast():
+                    outputs = stage2_model(batch_X)
+                    loss = criterion(outputs, batch_y)
+
+                # Mixed precision backward pass
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
 
                 # Gradient clipping
                 if config.get('grad_clip', 0) > 0:
                     torch.nn.utils.clip_grad_norm_(stage2_model.parameters(), config['grad_clip'])
 
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
 
                 train_loss += loss.item()
                 train_preds.append(outputs.detach().cpu().numpy())
@@ -711,9 +822,10 @@ def train_stage2_boost_model(
             train_loss /= len(train_loader)
             train_preds = np.vstack(train_preds)
             train_targets = np.vstack(train_targets)
-            train_r2 = r2_score(train_targets, train_preds)
+            train_r2, _ = compute_r2_safe(train_targets, train_preds, method='per_output_mean')
+            train_mae = mean_absolute_error(train_targets, train_preds)
 
-            # Validation phase
+            # Validation phase with mixed precision
             stage2_model.eval()
             val_loss = 0.0
             val_preds = []
@@ -722,8 +834,9 @@ def train_stage2_boost_model(
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                    outputs = stage2_model(batch_X)
-                    loss = criterion(outputs, batch_y)
+                    with autocast():
+                        outputs = stage2_model(batch_X)
+                        loss = criterion(outputs, batch_y)
 
                     val_loss += loss.item()
                     val_preds.append(outputs.cpu().numpy())
@@ -732,13 +845,16 @@ def train_stage2_boost_model(
             val_loss /= len(val_loader)
             val_preds = np.vstack(val_preds)
             val_targets = np.vstack(val_targets)
-            val_r2 = r2_score(val_targets, val_preds)
+            val_r2, _ = compute_r2_safe(val_targets, val_preds, method='per_output_mean')
+            val_mae = mean_absolute_error(val_targets, val_preds)
 
             # Record history
             history['train_losses'].append(train_loss)
             history['val_losses'].append(val_loss)
             history['train_r2'].append(train_r2)
             history['val_r2'].append(val_r2)
+            history['train_mae'].append(train_mae)
+            history['val_mae'].append(val_mae)
 
             # Learning rate scheduling
             scheduler.step(val_loss)
@@ -753,11 +869,20 @@ def train_stage2_boost_model(
             else:
                 patience_counter += 1
 
-            # Progress output
+            # Progress output (增强版)
             if (epoch + 1) % max(1, config['epochs'] // 20) == 0 or epoch == 0 or epoch == config['epochs'] - 1:
-                msg = f"Epoch {epoch + 1}/{config['epochs']} - "
-                msg += f"Train Loss: {train_loss:.6f}, Train R²: {train_r2:.4f} | "
-                msg += f"Val Loss: {val_loss:.6f}, Val R²: {val_r2:.4f}"
+                # 获取当前学习率
+                current_lr = optimizer.param_groups[0]['lr']
+
+                # 计算RMSE
+                train_rmse = np.sqrt(train_loss)
+                val_rmse = np.sqrt(val_loss)
+
+                msg = f"\nEpoch {epoch + 1}/{config['epochs']}"
+                msg += f"\n  📉 Train: Loss={train_loss:.4f}, RMSE={train_rmse:.4f}, MAE={train_mae:.4f}, R²={train_r2:.4f}"
+                msg += f"\n  📊 Val:   Loss={val_loss:.4f}, RMSE={val_rmse:.4f}, MAE={val_mae:.4f}, R²={val_r2:.4f}"
+                msg += f"\n  🎯 Val/Train Ratio: {val_loss/train_loss:.2f}x"
+                msg += f"\n  📚 LR: {current_lr:.2e}"
                 log_msg.append(msg)
 
                 if progress_callback:
@@ -771,17 +896,23 @@ def train_stage2_boost_model(
         # Load best model
         stage2_model.load_state_dict(best_model_state)
 
-        # Test set evaluation
-        stage2_model.eval()
-        with torch.no_grad():
-            X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
-            y_test_pred_scaled = stage2_model(X_test_tensor).cpu().numpy()
-
-        y_test_pred = scaler_y.inverse_transform(y_test_pred_scaled)
+        # Test set evaluation with batch inference
+        y_test_pred = batch_inference(
+            stage2_model, X_test, scaler_X, scaler_y, device,
+            batch_size=config['batch_size'], model_name="Stage2"
+        )
 
         test_mae = mean_absolute_error(y_test, y_test_pred)
         test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
-        test_r2 = r2_score(y_test, y_test_pred)
+        test_r2, _ = compute_r2_safe(y_test, y_test_pred, method='per_output_mean')
+
+        # Training history summary
+        log_msg.append(f"\n📈 训练历史总结 ({len(history['train_losses'])} epochs):")
+        log_msg.append(f"  最佳验证Loss: {best_val_loss:.4f} (Epoch {np.argmin(history['val_losses']) + 1})")
+        log_msg.append(f"  最佳验证R²: {max(history['val_r2']):.4f} (Epoch {np.argmax(history['val_r2']) + 1})")
+        log_msg.append(f"  最佳验证MAE: {min(history['val_mae']):.4f} (Epoch {np.argmin(history['val_mae']) + 1})")
+        log_msg.append(f"  最终训练Loss: {history['train_losses'][-1]:.4f}")
+        log_msg.append(f"  最终验证Loss: {history['val_losses'][-1]:.4f}")
 
         log_msg.append(f"\n📊 测试集性能:")
         log_msg.append(f"  MAE: {test_mae:.6f}")
@@ -919,23 +1050,24 @@ def compute_signal_r2_and_select_threshold(
         y_true = residuals_df[y_true_cols].values
         y_pred_base = residuals_df[y_pred_cols].values
 
-        # Stage2 residual prediction
+        # Stage2 residual prediction using batch inference
         X = residuals_df[boundary_signals].values
-        X_scaled = global_state['stage2_scalers'][stage2_model_name]['X'].transform(X)
-
-        stage2_model.eval()
-        with torch.no_grad():
-            X_tensor = torch.FloatTensor(X_scaled).to(device)
-            y_residual_pred_scaled = stage2_model(X_tensor).cpu().numpy()
-
-        y_residual_pred = global_state['stage2_scalers'][stage2_model_name]['y'].inverse_transform(
-            y_residual_pred_scaled
+        y_residual_pred = batch_inference(
+            stage2_model,
+            X,
+            global_state['stage2_scalers'][stage2_model_name]['X'],
+            global_state['stage2_scalers'][stage2_model_name]['y'],
+            device,
+            batch_size=512,
+            model_name="Stage2"
         )
 
-        # Compute R² for each signal
+        # Compute R² for each signal using safe computation
         signal_r2_scores = []
+        _, per_signal_r2 = compute_r2_safe(y_true, y_pred_base, method='per_output_mean')
+
         for i, signal in enumerate(target_signals):
-            r2 = r2_score(y_true[:, i], y_pred_base[:, i])
+            r2 = per_signal_r2[i]
             signal_r2_scores.append({
                 'signal': signal,
                 'r2': r2,
@@ -964,13 +1096,13 @@ def compute_signal_r2_and_select_threshold(
                 # Apply Stage2 correction
                 y_ensemble[:, i] = y_pred_base[:, i] + y_residual_pred[:, i]
 
-        # Compute ensemble model performance
+        # Compute ensemble model performance using safe R² computation
         mae_base = mean_absolute_error(y_true, y_pred_base)
         mae_ensemble = mean_absolute_error(y_true, y_ensemble)
         rmse_base = np.sqrt(mean_squared_error(y_true, y_pred_base))
         rmse_ensemble = np.sqrt(mean_squared_error(y_true, y_ensemble))
-        r2_base = r2_score(y_true, y_pred_base)
-        r2_ensemble = r2_score(y_true, y_ensemble)
+        r2_base, _ = compute_r2_safe(y_true, y_pred_base, method='per_output_mean')
+        r2_ensemble, _ = compute_r2_safe(y_true, y_ensemble, method='per_output_mean')
 
         improvement_mae = (mae_base - mae_ensemble) / mae_base * 100
         improvement_rmse = (rmse_base - rmse_ensemble) / rmse_base * 100
@@ -1076,11 +1208,200 @@ def load_data_from_csv(file_obj):
 
         signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
 
-        return status, df, signals_display
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
 
     except Exception as e:
         error_msg = f"❌ 数据加载失败: {str(e)}"
         return error_msg, None, ""
+
+
+def get_available_csv_files():
+    """
+    Get list of available CSV files in data/ folder
+
+    Returns:
+        List of CSV file paths (safe - never raises exceptions)
+    """
+    try:
+        import glob
+
+        csv_files = []
+
+        # Search in data/ folder
+        if os.path.exists('data'):
+            csv_files.extend(glob.glob('data/*.csv'))
+
+        # Search in current directory
+        csv_files.extend(glob.glob('*.csv'))
+
+        # Sort by modification time (newest first)
+        csv_files = sorted(csv_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+
+        return csv_files if csv_files else []
+
+    except Exception as e:
+        print(f"⚠️ Error in get_available_csv_files: {e}")
+        return []  # Return empty list on error
+
+
+def load_csv_from_path(csv_path):
+    """
+    Load CSV file from a given path
+
+    Args:
+        csv_path: Path to CSV file
+
+    Returns:
+        status: Status message
+        preview_df: Data preview (first 100 rows)
+        signals: Available signals
+    """
+    if not csv_path or csv_path == "(no CSV files found)":
+        return "❌ 请选择有效的CSV文件", None, ""
+
+    if not os.path.exists(csv_path):
+        return f"❌ 文件不存在: {csv_path}", None, ""
+
+    try:
+        df = pd.read_csv(csv_path)
+
+        # If there are unnamed columns, set as index
+        if 'Unnamed: 0' in df.columns:
+            df = df.set_index('Unnamed: 0')
+            df.index.name = 'index'
+        elif df.index.name is None:
+            df.index.name = 'index'
+
+        global_state['df'] = df
+        global_state['all_signals'] = list(df.columns)
+
+        status = f"✅ 数据加载成功!\n\n"
+        status += f"📁 文件: {csv_path}\n"
+        status += f"📊 数据维度: {df.shape}\n"
+        status += f"📈 样本数: {len(df):,}\n"
+        status += f"🎯 特征数: {len(df.columns)}\n\n"
+        status += f"前5列: {', '.join(df.columns[:5].tolist())}"
+
+        signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
+
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
+
+    except Exception as e:
+        error_msg = f"❌ 数据加载失败: {str(e)}"
+        return error_msg, None, ""
+
+
+def check_preloaded_data():
+    """
+    Check if data was pre-loaded (from Colab) and return its status
+
+    Returns:
+        status: Status message
+        preview_df: Data preview (first 100 rows)
+        signals_display: Available signals
+    """
+    if global_state.get('df') is not None:
+        df = global_state['df']
+
+        status = f"✅ [预加载] 数据已加载!\n\n"
+        status += f"📊 数据维度: {df.shape}\n"
+        status += f"📈 样本数: {len(df):,}\n"
+        status += f"🎯 特征数: {len(df.columns)}\n\n"
+        status += f"列名: {', '.join(df.columns[:5].tolist())}"
+        if len(df.columns) > 5:
+            status += f"... (共{len(df.columns)}列)"
+
+        signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
+
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
+    else:
+        return "⚠️ 尚未加载数据，请选择CSV文件、上传文件或创建示例数据", None, ""
+
+
+def load_signals_config_from_json(json_file):
+    """
+    Load boundary and target signals configuration from JSON file
+
+    Args:
+        json_file: Gradio File object or file path
+
+    Returns:
+        boundary_signals: List of boundary signal names
+        target_signals: List of target signal names
+        status_message: Status message
+    """
+    try:
+        # Handle Gradio File object or direct path
+        if hasattr(json_file, 'name'):
+            file_path = json_file.name
+        else:
+            file_path = json_file
+
+        if not file_path:
+            return [], [], "❌ 请上传JSON配置文件"
+
+        if not os.path.exists(file_path):
+            return [], [], f"❌ 文件不存在: {file_path}"
+
+        # Load JSON
+        with open(file_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        boundary_signals = config.get('boundary_signals', [])
+        target_signals = config.get('target_signals', [])
+
+        if not boundary_signals or not target_signals:
+            return [], [], "❌ JSON文件格式错误，缺少 'boundary_signals' 或 'target_signals'"
+
+        status = f"✅ JSON配置加载成功!\n\n"
+        status += f"📥 边界信号数: {len(boundary_signals)}\n"
+        status += f"📤 目标信号数: {len(target_signals)}\n"
+        status += f"📁 文件: {os.path.basename(file_path)}"
+
+        return boundary_signals, target_signals, status
+
+    except json.JSONDecodeError as e:
+        return [], [], f"❌ JSON解析失败: {str(e)}"
+    except Exception as e:
+        return [], [], f"❌ 加载失败: {str(e)}"
+
+
+def get_available_json_configs():
+    """
+    Get list of available JSON config files in data/ folder
+
+    Returns:
+        List of JSON file paths
+    """
+    try:
+        import glob
+
+        json_files = []
+
+        # Search in data/ folder
+        if os.path.exists('data'):
+            json_files.extend(glob.glob('data/*.json'))
+
+        # Search in current directory
+        json_files.extend(glob.glob('*.json'))
+
+        # Sort by modification time (newest first)
+        json_files = sorted(json_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+
+        return json_files if json_files else []
+
+    except Exception as e:
+        print(f"⚠️ Error in get_available_json_configs: {e}")
+        return []
 
 
 def create_sample_data():
@@ -1116,7 +1437,10 @@ def create_sample_data():
 
         signals_display = f"可用信号 ({len(df.columns)}个):\n" + ", ".join(df.columns.tolist())
 
-        return status, df, signals_display
+        # Data preview (first 100 rows)
+        preview_df = df.head(100)
+
+        return status, preview_df, signals_display
 
     except Exception as e:
         error_msg = f"❌ 示例数据创建失败: {str(e)}"
@@ -1131,6 +1455,7 @@ def train_base_model_ui(
         epochs, batch_size, lr,
         d_model, nhead, num_layers, dropout,
         test_size, val_size,
+        weight_decay, scheduler_patience, scheduler_factor, grad_clip_norm,
         temporal_signals=None, apply_smoothing=False,
         progress=gr.Progress()
 ):
@@ -1240,48 +1565,103 @@ def train_base_model_ui(
             return f"❌ 不支持的模型类型: {model_type}"
 
         # Optimizer
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=10, verbose=True
+            optimizer, mode='min', factor=scheduler_factor, patience=scheduler_patience
         )
+        log_messages.append(f"📊 优化器: AdamW (lr={lr:.2e}, weight_decay={weight_decay:.2e})")
+        log_messages.append(f"📊 学习率调度器: ReduceLROnPlateau (factor={scheduler_factor}, patience={scheduler_patience})")
+        log_messages.append(f"✂️ 梯度裁剪: {grad_clip_norm}")
         criterion = nn.MSELoss()
 
+        # Mixed precision training
+        scaler = GradScaler()
+
         # Training loop
-        log_messages.append(f"\n🎯 开始训练...")
-        history = {'train_losses': [], 'val_losses': []}
+        log_messages.append(f"\n🎯 开始训练 (混合精度)...")
+        history = {
+            'train_losses': [],
+            'val_losses': [],
+            'train_r2': [],
+            'val_r2': [],
+            'train_mae': [],
+            'val_mae': []
+        }
         best_val_loss = float('inf')
         patience_counter = 0
         early_stop_patience = 25
 
         for epoch in range(epochs):
-            # Training
+            # Training with mixed precision
             model.train()
             train_loss = 0.0
+            train_preds = []
+            train_targets = []
             for batch_X, batch_y in train_loader:
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 optimizer.zero_grad()
-                outputs = model(batch_X)
-                loss = criterion(outputs, batch_y)
-                loss.backward()
-                optimizer.step()
+
+                # Mixed precision forward pass
+                with autocast():
+                    outputs = model(batch_X)
+                    loss = criterion(outputs, batch_y)
+
+                # Mixed precision backward pass
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+                scaler.step(optimizer)
+                scaler.update()
+
                 train_loss += loss.item()
+                train_preds.append(outputs.detach().cpu().numpy())
+                train_targets.append(batch_y.detach().cpu().numpy())
 
             train_loss /= len(train_loader)
 
-            # Validation
+            # Calculate training metrics
+            train_preds_arr = np.vstack(train_preds)
+            train_targets_arr = np.vstack(train_targets)
+
+            # Inverse transform to original space for metrics
+            train_preds_orig = scaler_y.inverse_transform(train_preds_arr)
+            train_targets_orig = scaler_y.inverse_transform(train_targets_arr)
+            train_r2, _ = compute_r2_safe(train_targets_orig, train_preds_orig, method='per_output_mean')
+            train_mae = mean_absolute_error(train_targets_orig, train_preds_orig)
+
+            # Validation with mixed precision
             model.eval()
             val_loss = 0.0
+            val_preds = []
+            val_targets = []
             with torch.no_grad():
                 for batch_X, batch_y in val_loader:
                     batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-                    outputs = model(batch_X)
-                    loss = criterion(outputs, batch_y)
+                    with autocast():
+                        outputs = model(batch_X)
+                        loss = criterion(outputs, batch_y)
                     val_loss += loss.item()
+                    val_preds.append(outputs.cpu().numpy())
+                    val_targets.append(batch_y.cpu().numpy())
 
             val_loss /= len(val_loader)
 
+            # Calculate validation metrics
+            val_preds_arr = np.vstack(val_preds)
+            val_targets_arr = np.vstack(val_targets)
+
+            # Inverse transform to original space for metrics
+            val_preds_orig = scaler_y.inverse_transform(val_preds_arr)
+            val_targets_orig = scaler_y.inverse_transform(val_targets_arr)
+            val_r2, _ = compute_r2_safe(val_targets_orig, val_preds_orig, method='per_output_mean')
+            val_mae = mean_absolute_error(val_targets_orig, val_preds_orig)
+
             history['train_losses'].append(train_loss)
             history['val_losses'].append(val_loss)
+            history['train_r2'].append(train_r2)
+            history['val_r2'].append(val_r2)
+            history['train_mae'].append(train_mae)
+            history['val_mae'].append(val_mae)
 
             scheduler.step(val_loss)
 
@@ -1293,11 +1673,23 @@ def train_base_model_ui(
             else:
                 patience_counter += 1
 
-            # 进度显示
+            # 进度显示 (增强版 - 显示MAE, RMSE, R2和学习率)
             if (epoch + 1) % max(1, epochs // 20) == 0 or epoch == 0:
-                msg = f"Epoch {epoch + 1}/{epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}"
+                # 获取当前学习率
+                current_lr = optimizer.param_groups[0]['lr']
+
+                # 计算RMSE (更直观)
+                train_rmse = np.sqrt(train_loss)
+                val_rmse = np.sqrt(val_loss)
+
+                msg = f"\nEpoch {epoch + 1}/{epochs}"
+                msg += f"\n  📉 Train: Loss={train_loss:.4f}, RMSE={train_rmse:.4f}, MAE={train_mae:.4f}, R²={train_r2:.4f}"
+                msg += f"\n  📊 Val:   Loss={val_loss:.4f}, RMSE={val_rmse:.4f}, MAE={val_mae:.4f}, R²={val_r2:.4f}"
+                msg += f"\n  🎯 Val/Train Ratio: {val_loss/train_loss:.2f}x"
+                msg += f"\n  📚 LR: {current_lr:.2e}"
+
                 log_messages.append(msg)
-                progress((epoch + 1) / epochs, desc=msg)
+                progress((epoch + 1) / epochs, desc=f"Epoch {epoch+1}/{epochs} - Val R²: {val_r2:.4f}")
 
             if patience_counter >= early_stop_patience:
                 log_messages.append(f"\n⏸️ 早停触发 (Epoch {epoch + 1})")
@@ -1306,17 +1698,23 @@ def train_base_model_ui(
         # Load best model
         model.load_state_dict(best_model_state)
 
-        # Test set evaluation
-        model.eval()
-        with torch.no_grad():
-            X_test_tensor = torch.FloatTensor(X_test_scaled).to(device)
-            y_test_pred_scaled = model(X_test_tensor).cpu().numpy()
-
-        y_test_pred = scaler_y.inverse_transform(y_test_pred_scaled)
+        # Test set evaluation with mixed precision and batch inference
+        y_test_pred = batch_inference(
+            model, X_test, scaler_X, scaler_y, device,
+            batch_size=batch_size, model_name=model_type
+        )
 
         test_mae = mean_absolute_error(y_test, y_test_pred)
         test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
-        test_r2 = r2_score(y_test, y_test_pred)
+        test_r2, _ = compute_r2_safe(y_test, y_test_pred, method='per_output_mean')
+
+        # Training history summary
+        log_messages.append(f"\n📈 训练历史总结 ({len(history['train_losses'])} epochs):")
+        log_messages.append(f"  最佳验证Loss: {best_val_loss:.4f} (Epoch {np.argmin(history['val_losses']) + 1})")
+        log_messages.append(f"  最佳验证R²: {max(history['val_r2']):.4f} (Epoch {np.argmax(history['val_r2']) + 1})")
+        log_messages.append(f"  最佳验证MAE: {min(history['val_mae']):.4f} (Epoch {np.argmin(history['val_mae']) + 1})")
+        log_messages.append(f"  最终训练Loss: {history['train_losses'][-1]:.4f}")
+        log_messages.append(f"  最终验证Loss: {history['val_losses'][-1]:.4f}")
 
         log_messages.append(f"\n📊 测试集性能:")
         log_messages.append(f"  MAE: {test_mae:.6f}")
@@ -1400,8 +1798,121 @@ def train_base_model_ui(
 # ============================================================================
 # Residual extraction functions
 
-def extract_residuals_ui(model_name, future_horizon, use_segment, start_index, end_index):
-    """UI function for residual extraction"""
+def get_inference_config_files():
+    """
+    Get list of inference config JSON files in saved_models folder
+
+    Returns:
+        List of inference config file paths
+    """
+    try:
+        import glob
+
+        config_files = []
+
+        # Search in saved_models folder and subdirectories
+        if os.path.exists('saved_models'):
+            config_files.extend(glob.glob('saved_models/**/*_inference.json', recursive=True))
+
+        # Sort by modification time (newest first)
+        config_files = sorted(config_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+
+        return config_files if config_files else []
+
+    except Exception as e:
+        print(f"⚠️ Error in get_inference_config_files: {e}")
+        return []
+
+
+def load_model_from_inference_config_path(config_path):
+    """
+    Load model from inference config file path
+
+    Args:
+        config_path: Path to inference config JSON file
+
+    Returns:
+        model_name: Loaded model name
+        status: Status message
+    """
+    try:
+        if not config_path:
+            return None, "❌ 请选择推理配置文件"
+
+        if not os.path.exists(config_path):
+            return None, f"❌ 文件不存在: {config_path}"
+
+        # Load config
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        model_name = config.get('model_name')
+        if not model_name:
+            return None, "❌ 配置文件中缺少 model_name"
+
+        status = f"✅ 配置加载成功!\n\n"
+        status += f"📁 配置文件: {os.path.basename(config_path)}\n"
+        status += f"🤖 模型名称: {model_name}\n"
+        status += f"📥 边界信号数: {len(config.get('boundary_signals', []))}\n"
+        status += f"📤 目标信号数: {len(config.get('target_signals', []))}"
+
+        return model_name, status
+
+    except json.JSONDecodeError as e:
+        return None, f"❌ JSON解析失败: {str(e)}"
+    except Exception as e:
+        return None, f"❌ 加载失败: {str(e)}"
+
+
+def load_scalers_file(scaler_file, model_name):
+    """
+    Load scalers from a pickle file for a specific model
+
+    Args:
+        scaler_file: Uploaded scaler file object
+        model_name: Model name to associate the scalers with
+
+    Returns:
+        status_msg: Status message
+    """
+    try:
+        if not scaler_file:
+            return "❌ 请上传scalers文件！"
+
+        if not model_name:
+            return "❌ 请先选择模型！"
+
+        # Load scalers from file
+        with open(scaler_file.name, 'rb') as f:
+            scalers = pickle.load(f)
+
+        # Save to global state
+        if 'manual_scalers' not in global_state:
+            global_state['manual_scalers'] = {}
+
+        global_state['manual_scalers'][model_name] = scalers
+
+        success_msg = f"✅ Scalers加载成功!\n\n"
+        success_msg += f"📌 Model name: {model_name}\n"
+        success_msg += f"📊 Scalers包含: {list(scalers.keys())}\n"
+
+        # Verify scalers have required keys
+        if 'X' in scalers and 'y' in scalers:
+            success_msg += f"✓ 包含必需的X和y scalers\n"
+        else:
+            success_msg += f"⚠️ 警告: scalers可能缺少X或y键\n"
+
+        print(success_msg)
+        return success_msg
+
+    except Exception as e:
+        error_msg = f"❌ Scalers加载失败:\n{str(e)}\n\n{traceback.format_exc()}"
+        print(error_msg)
+        return error_msg
+
+
+def extract_residuals_ui(model_name):
+    """UI function for residual extraction - full dataset inference"""
     try:
         if not model_name:
             return "❌ 请选择模型！", None
@@ -1411,38 +1922,125 @@ def extract_residuals_ui(model_name, future_horizon, use_segment, start_index, e
 
         log_msg = []
         log_msg.append("=" * 80)
-        log_msg.append("📊 开始提取残差")
+        log_msg.append("📊 开始提取残差（全数据集）")
         log_msg.append("=" * 80)
 
         df = global_state['df']
+        log_msg.append(f"\n📈 数据集大小: {len(df):,} 条")
 
-        # Segment selection
-        if use_segment:
-            start_idx = max(0, int(start_index))
-            end_idx = min(len(df), int(end_index))
-            df_segment = df.iloc[start_idx:end_idx].copy()
-            log_msg.append(f"\n✂️ 使用数据片段: index [{start_idx}, {end_idx})")
-            log_msg.append(f"   片段长度: {len(df_segment):,}")
+        # Load model
+        model_path = os.path.join("saved_models", f"{model_name}.pth")
+        if not os.path.exists(model_path):
+            return f"❌ 模型文件不存在: {model_path}", None
+
+        log_msg.append(f"\n📥 加载模型: {model_name}")
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
+        model_config = checkpoint['model_config']
+        boundary_signals = model_config['boundary_signals']
+        target_signals = model_config['target_signals']
+
+        log_msg.append(f"  边界信号数: {len(boundary_signals)}")
+        log_msg.append(f"  目标信号数: {len(target_signals)}")
+
+        # Check if signals exist in dataframe
+        missing_boundary = [s for s in boundary_signals if s not in df.columns]
+        missing_target = [s for s in target_signals if s not in df.columns]
+
+        if missing_boundary:
+            return f"❌ 数据集中缺少边界信号: {missing_boundary}", None
+        if missing_target:
+            return f"❌ 数据集中缺少目标信号: {missing_target}", None
+
+        # Prepare data
+        X = df[boundary_signals].values
+        y = df[target_signals].values
+
+        # Load scalers - try checkpoint first, then manual_scalers
+        scalers = None
+        if 'scalers' in checkpoint:
+            scalers = checkpoint['scalers']
+            log_msg.append(f"  ✓ 从checkpoint加载scalers")
+        elif 'manual_scalers' in global_state and model_name in global_state['manual_scalers']:
+            scalers = global_state['manual_scalers'][model_name]
+            log_msg.append(f"  ✓ 从手动加载的scalers加载")
         else:
-            df_segment = df.copy()
-            log_msg.append(f"\n📈 使用全部数据: {len(df_segment):,} 条")
+            error_msg = "❌ 未找到scalers！\n\n"
+            error_msg += f"checkpoint中无scalers，且未手动加载scalers。\n\n"
+            error_msg += "💡 解决方法:\n"
+            error_msg += "1. 在下方'加载Scalers文件'区域上传对应的scalers.pkl文件\n"
+            error_msg += f"2. 文件名应该类似: {model_name}_scalers.pkl\n"
+            error_msg += "3. 点击'📥 加载Scalers'按钮后，再次点击'🔬 提取残差'按钮\n"
+            return error_msg, None
 
-        # Use ResidualExtractor to extract residuals
-        from residual_tft import ResidualExtractor
+        scaler_X = scalers['X']
+        scaler_y = scalers['y']
 
-        residuals_df, info = ResidualExtractor.extract_residuals_from_trained_models(
-            model_name, df_segment, global_state, device
+        # Load model
+        config = model_config['config']
+        model = StaticSensorTransformer(
+            num_boundary_sensors=len(boundary_signals),
+            num_target_sensors=len(target_signals),
+            d_model=config['d_model'],
+            nhead=config['nhead'],
+            num_layers=config['num_layers'],
+            dropout=config['dropout']
+        ).to(device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+
+        log_msg.append(f"\n🔄 开始推理...")
+
+        # Batch inference
+        from models.residual_tft import batch_inference
+        y_pred = batch_inference(
+            model, X, scaler_X, scaler_y, device,
+            batch_size=512, model_name="SST"
         )
 
-        if residuals_df.empty:
-            return "❌ 残差提取失败！", None
+        # Calculate residuals in original space
+        residuals = y - y_pred
+
+        # Calculate metrics
+        from models.residual_tft import compute_r2_safe
+        r2, per_signal_r2 = compute_r2_safe(y, y_pred, method='per_output_mean')
+        mae = mean_absolute_error(y, y_pred)
+        rmse = np.sqrt(mean_squared_error(y, y_pred))
+
+        log_msg.append(f"\n📊 推理完成:")
+        log_msg.append(f"  MAE: {mae:.6f}")
+        log_msg.append(f"  RMSE: {rmse:.6f}")
+        log_msg.append(f"  R²: {r2:.4f}")
+
+        # Create residuals dataframe
+        residual_cols = [f"{sig}_residual" for sig in target_signals]
+        pred_cols = [f"{sig}_pred" for sig in target_signals]
+        true_cols = [f"{sig}_true" for sig in target_signals]
+
+        residuals_data = {}
+        for i, sig in enumerate(target_signals):
+            residuals_data[f"{sig}_residual"] = residuals[:, i]
+            residuals_data[f"{sig}_pred"] = y_pred[:, i]
+            residuals_data[f"{sig}_true"] = y[:, i]
+
+        residuals_df = pd.DataFrame(residuals_data)
 
         # Save residual data
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        residual_key = f"{model_name}_{timestamp}_h{future_horizon}"
+        residual_key = f"{model_name}_{timestamp}"
 
-        info['future_horizon'] = future_horizon
-        info['base_model_name'] = model_name
+        info = {
+            'base_model_name': model_name,
+            'boundary_signals': boundary_signals,
+            'target_signals': target_signals,
+            'residual_signals': residual_cols,
+            'metrics': {
+                'mae': float(mae),
+                'rmse': float(rmse),
+                'r2': float(r2),
+                'per_signal_r2': per_signal_r2.tolist() if isinstance(per_signal_r2, np.ndarray) else per_signal_r2
+            }
+        }
 
         global_state['residual_data'][residual_key] = {
             'data': residuals_df,
@@ -1548,17 +2146,38 @@ def create_unified_interface():
         with gr.Tabs():
             # Tab 1: 数据加载
             with gr.Tab("📂 数据加载", elem_id="data_loading"):
-                gr.Markdown("## 上传数据或创建示例数据")
+                gr.Markdown("## 选择、上传或创建数据")
 
                 with gr.Row():
                     with gr.Column(scale=1):
+                        gr.Markdown("### 📁 选择已有CSV文件")
+                        csv_file_selector = gr.Dropdown(
+                            choices=[],  # Empty initially, populated on page load
+                            label="选择data文件夹下的CSV文件",
+                            info="点击'刷新列表'来加载可用的CSV文件"
+                        )
+                        with gr.Row():
+                            select_csv_btn = gr.Button("📂 加载选中文件", variant="primary", size="lg")
+                            refresh_csv_btn = gr.Button("🔄 刷新列表", size="sm")
+
+                        gr.Markdown("### 📤 或上传CSV文件")
                         data_file = gr.File(label="上传CSV文件", file_types=['.csv'])
-                        load_btn = gr.Button("📥 加载数据", variant="primary", size="lg")
-                        sample_btn = gr.Button("🎲 Create sample data", size="lg")
+                        upload_btn = gr.Button("📥 加载上传文件", variant="secondary", size="lg")
+
+                        gr.Markdown("### 🎲 或创建示例数据")
+                        sample_btn = gr.Button("🎲 创建示例数据", size="lg")
 
                     with gr.Column(scale=1):
                         data_status = gr.Textbox(label="数据状态", lines=10, interactive=False)
                         signals_display = gr.Textbox(label="可用信号", lines=10, interactive=False)
+
+                # Data preview table
+                with gr.Row():
+                    data_preview = gr.Dataframe(
+                        label="📊 数据预览 (前100行)",
+                        interactive=False,
+                        wrap=True
+                    )
 
             # Tab 2: SST模型Training
             with gr.Tab("🎯 SST模型Training", elem_id="sst_training"):
@@ -1567,6 +2186,28 @@ def create_unified_interface():
                 with gr.Row():
                     with gr.Column(scale=1):
                         gr.Markdown("### 🎛️ 信号选择")
+
+                        # JSON配置加载
+                        with gr.Accordion("📁 从JSON加载信号配置", open=False):
+                            json_config_selector = gr.Dropdown(
+                                choices=[],
+                                label="选择data文件夹下的JSON配置",
+                                info="或手动上传JSON文件"
+                            )
+                            with gr.Row():
+                                load_json_btn = gr.Button("📂 加载配置", size="sm", variant="secondary")
+                                refresh_json_btn = gr.Button("🔄 刷新", size="sm")
+                            json_upload = gr.File(
+                                label="上传JSON配置文件",
+                                file_types=['.json'],
+                                type="filepath"
+                            )
+                            json_status = gr.Textbox(
+                                label="配置加载状态",
+                                lines=3,
+                                interactive=False
+                            )
+
                         boundary_signals_static = gr.Dropdown(
                             choices=[], label="边界信号 (输入)", multiselect=True
                         )
@@ -1576,17 +2217,25 @@ def create_unified_interface():
 
                         gr.Markdown("### 🏗️ 模型架构")
                         with gr.Row():
-                            d_model_static = gr.Slider(32, 512, 128, 32, label="模型维度")
-                            nhead_static = gr.Slider(2, 16, 8, 2, label="注意力头数")
-                        num_layers_static = gr.Slider(1, 8, 3, 1, label="Transformer层数")
+                            d_model_static = gr.Slider(32, 1280, 256, 32, label="模型维度")
+                            nhead_static = gr.Slider(2, 80, 16, 2, label="注意力头数")
+                        with gr.Row():
+                            num_layers_static = gr.Slider(1, 30, 6, 1, label="Transformer层数")
+                            dropout_static = gr.Slider(0, 0.5, 0.1, 0.05, label="Dropout率")
 
                         gr.Markdown("### 🎯 训练参数")
                         with gr.Row():
-                            epochs_static = gr.Slider(10, 500, 100, 10, label="训练轮数")
-                            batch_size_static = gr.Slider(16, 256, 64, 16, label="批大小")
+                            epochs_static = gr.Slider(10, 250, 50, 10, label="训练轮数")
+                            batch_size_static = gr.Slider(16, 2560, 512, 16, label="批大小")
                         with gr.Row():
-                            lr_static = gr.Number(value=0.001, label="学习率")
-                            dropout_static = gr.Slider(0, 0.5, 0.1, 0.05, label="Dropout率")
+                            lr_static = gr.Number(value=0.0001, label="学习率")
+                            weight_decay_static = gr.Number(value=1e-5, label="权重衰减")
+
+                        gr.Markdown("### ⚙️ 优化器设置")
+                        with gr.Row():
+                            grad_clip_norm_static = gr.Slider(0.1, 5.0, 1.0, 0.1, label="梯度裁剪")
+                            scheduler_patience_static = gr.Slider(1, 15, 3, 1, label="学习率调度耐心值")
+                        scheduler_factor_static = gr.Slider(0.1, 0.9, 0.5, 0.1, label="学习率衰减因子")
 
                         gr.Markdown("### 🔀 数据分割")
                         with gr.Row():
@@ -1607,6 +2256,7 @@ def create_unified_interface():
             # Tab 3: 残差提取
             with gr.Tab("🔬 残差提取", elem_id="residual_extraction"):
                 gr.Markdown("## 从训练好的SST模型提取残差")
+                gr.Markdown("对整个数据集进行推理，生成残差用于Stage2训练")
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -1614,85 +2264,68 @@ def create_unified_interface():
                             choices=get_available_models(),
                             label="选择SST模型"
                         )
-                        refresh_models_btn = gr.Button("🔄 刷新", size="sm")
+                        refresh_models_btn = gr.Button("🔄 刷新模型列表", size="sm")
 
-                        future_horizon = gr.Slider(
-                            1, 100, 10, 1,
-                            label="未来预测长度",
-                            info="用于后续TFT训练的未来步数"
-                        )
+                        gr.Markdown("### 📤 推理配置文件（可选）")
+                        gr.Markdown("可选择已保存的推理配置文件来加载模型")
 
-                        gr.Markdown("### ✂️ 数据片段选择（可选）")
-                        use_segment_checkbox = gr.Checkbox(
-                            label="使用数据片段",
-                            value=False
+                        inference_config_selector = gr.Dropdown(
+                            choices=[],
+                            label="选择saved_models文件夹下的推理配置",
+                            info="选择 *_inference.json 文件"
                         )
                         with gr.Row():
-                            start_index_input = gr.Number(value=0, label="起始索引", precision=0)
-                            end_index_input = gr.Number(value=10000, label="结束索引", precision=0)
+                            load_inference_btn = gr.Button("📥 加载配置", size="sm", variant="secondary")
+                            refresh_inference_btn = gr.Button("🔄 刷新配置列表", size="sm")
 
-                        with gr.Row():
-                            preset_10k_btn = gr.Button("0-10K", size="sm")
-                            preset_50k_btn = gr.Button("0-50K", size="sm")
-                            preset_100k_btn = gr.Button("0-100K", size="sm")
-                            preset_200k_btn = gr.Button("0-200K", size="sm")
+                        inference_load_status = gr.Textbox(label="配置加载状态", lines=3, interactive=False)
 
-                        extract_btn = gr.Button("🔬 提取残差", variant="primary", size="lg")
-
-                        gr.Markdown("### 📤 加载推理配置")
-                        inference_config_file = gr.File(
-                            label="上传推理配置文件 (*_inference.json)",
-                            file_types=['.json']
+                        gr.Markdown("### 📊 加载Scalers文件（可选）")
+                        gr.Markdown("如果模型checkpoint中不包含scalers，需要手动上传")
+                        scalers_file = gr.File(
+                            label="上传Scalers文件 (*_scalers.pkl)",
+                            file_types=['.pkl']
                         )
-                        load_inference_btn = gr.Button("📥 加载配置", size="sm")
-                        inference_load_status = gr.Textbox(label="加载状态", lines=3, interactive=False)
+                        load_scalers_btn = gr.Button("📥 加载Scalers", size="sm", variant="secondary")
+                        scalers_load_status = gr.Textbox(label="Scalers加载状态", lines=3, interactive=False)
+
+                        extract_btn = gr.Button("🔬 提取残差（全数据集）", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
-                        residual_status = gr.Textbox(label="残差提取状态", lines=15, interactive=False)
+                        residual_status = gr.Textbox(label="残差提取状态", lines=20, interactive=False)
                         residual_plot = gr.Plot(label="残差可视化")
 
                 # Event binding
-                def set_range_preset(start, end):
-                    return start, end, True
-
-                preset_10k_btn.click(
-                    fn=lambda: set_range_preset(0, 10000),
-                    outputs=[start_index_input, end_index_input, use_segment_checkbox]
-                )
-                preset_50k_btn.click(
-                    fn=lambda: set_range_preset(0, 50000),
-                    outputs=[start_index_input, end_index_input, use_segment_checkbox]
-                )
-                preset_100k_btn.click(
-                    fn=lambda: set_range_preset(0, 100000),
-                    outputs=[start_index_input, end_index_input, use_segment_checkbox]
-                )
-                preset_200k_btn.click(
-                    fn=lambda: set_range_preset(0, 200000),
-                    outputs=[start_index_input, end_index_input, use_segment_checkbox]
-                )
-
                 refresh_models_btn.click(
                     fn=lambda: gr.update(choices=get_available_models()),
                     outputs=[model_selector]
                 )
 
-                extract_btn.click(
-                    fn=extract_residuals_ui,
-                    inputs=[
-                        model_selector,
-                        future_horizon,
-                        use_segment_checkbox,
-                        start_index_input,
-                        end_index_input
-                    ],
-                    outputs=[residual_status, residual_plot]
+                # Refresh inference config list
+                refresh_inference_btn.click(
+                    fn=lambda: gr.update(choices=get_inference_config_files()),
+                    outputs=[inference_config_selector]
                 )
 
+                # Load inference config from selector
                 load_inference_btn.click(
-                    fn=lambda f: load_model_from_inference_config(f.name, device) if f else (None, "❌ 请上传文件"),
-                    inputs=[inference_config_file],
+                    fn=load_model_from_inference_config_path,
+                    inputs=[inference_config_selector],
                     outputs=[model_selector, inference_load_status]
+                )
+
+                # Load scalers file
+                load_scalers_btn.click(
+                    fn=lambda f, m: load_scalers_file(f, m) if f else "❌ 请上传文件",
+                    inputs=[scalers_file, model_selector],
+                    outputs=[scalers_load_status]
+                )
+
+                # Extract residuals (full dataset)
+                extract_btn.click(
+                    fn=extract_residuals_ui,
+                    inputs=[model_selector],
+                    outputs=[residual_status, residual_plot]
                 )
 
             # Tab 4: Stage2 BoostTraining
@@ -1711,20 +2344,25 @@ def create_unified_interface():
 
                         gr.Markdown("### 🏗️ 模型架构")
                         with gr.Row():
-                            d_model_stage2 = gr.Slider(32, 256, 128, 32, label="模型维度")
-                            nhead_stage2 = gr.Slider(2, 16, 8, 2, label="注意力头数")
-                        num_layers_stage2 = gr.Slider(1, 8, 3, 1, label="Transformer层数")
+                            d_model_stage2 = gr.Slider(32, 640, 128, 32, label="模型维度")
+                            nhead_stage2 = gr.Slider(2, 40, 8, 2, label="注意力头数")
+                        with gr.Row():
+                            num_layers_stage2 = gr.Slider(1, 20, 4, 1, label="Transformer层数")
+                            dropout_stage2 = gr.Slider(0, 0.5, 0.15, 0.05, label="Dropout率")
 
                         gr.Markdown("### 🎯 训练参数")
                         with gr.Row():
-                            epochs_stage2 = gr.Slider(10, 200, 100, 10, label="训练轮数")
-                            batch_size_stage2 = gr.Slider(16, 128, 32, 16, label="批大小")
+                            epochs_stage2 = gr.Slider(10, 400, 80, 10, label="训练轮数")
+                            batch_size_stage2 = gr.Slider(16, 2560, 512, 16, label="批大小")
                         with gr.Row():
-                            lr_stage2 = gr.Number(value=0.001, label="学习率")
-                            dropout_stage2 = gr.Slider(0, 0.5, 0.1, 0.05, label="Dropout率")
+                            lr_stage2 = gr.Number(value=0.0001, label="学习率")
+                            weight_decay_stage2 = gr.Number(value=5e-6, label="权重衰减")
+
+                        gr.Markdown("### ⚙️ 优化器设置")
                         with gr.Row():
-                            weight_decay_stage2 = gr.Number(value=1e-5, label="权重衰减")
-                            grad_clip_stage2 = gr.Slider(0.1, 5.0, 1.0, 0.1, label="梯度裁剪")
+                            grad_clip_stage2 = gr.Slider(0.1, 2.5, 0.5, 0.1, label="梯度裁剪")
+                            scheduler_patience_stage2 = gr.Slider(1, 75, 15, 1, label="学习率调度耐心值")
+                        scheduler_factor_stage2 = gr.Slider(0.1, 0.9, 0.7, 0.1, label="学习率衰减因子")
 
                         gr.Markdown("### 🔀 数据分割")
                         with gr.Row():
@@ -1745,6 +2383,7 @@ def create_unified_interface():
                 # Stage2Training函数
                 def train_stage2_ui(residual_data_key, d_model, nhead, num_layers, dropout,
                                     epochs, batch_size, lr, weight_decay, grad_clip,
+                                    scheduler_patience, scheduler_factor,
                                     test_size, val_size, progress=gr.Progress()):
 
                     config = {
@@ -1757,10 +2396,11 @@ def create_unified_interface():
                         'lr': float(lr),
                         'weight_decay': float(weight_decay),
                         'grad_clip': float(grad_clip),
+                        'scheduler_patience': int(scheduler_patience),
+                        'scheduler_factor': float(scheduler_factor),
                         'test_size': float(test_size),
                         'val_size': float(val_size),
-                        'early_stop_patience': 25,
-                        'scheduler_patience': 10
+                        'early_stop_patience': 25
                     }
 
                     def progress_callback(msg):
@@ -1785,6 +2425,7 @@ def create_unified_interface():
                         d_model_stage2, nhead_stage2, num_layers_stage2, dropout_stage2,
                         epochs_stage2, batch_size_stage2, lr_stage2,
                         weight_decay_stage2, grad_clip_stage2,
+                        scheduler_patience_stage2, scheduler_factor_stage2,
                         test_size_stage2, val_size_stage2
                     ],
                     outputs=[stage2_training_log]
@@ -1899,13 +2540,13 @@ def create_unified_interface():
                         y_pred_base_seg = y_pred_base[start_idx:end_idx]
                         y_pred_ensemble_seg = y_pred_ensemble[start_idx:end_idx]
 
-                        # 计算性能
+                        # 计算性能 using safe R² computation
                         mae_base = mean_absolute_error(y_true_seg, y_pred_base_seg)
                         mae_ensemble = mean_absolute_error(y_true_seg, y_pred_ensemble_seg)
                         rmse_base = np.sqrt(mean_squared_error(y_true_seg, y_pred_base_seg))
                         rmse_ensemble = np.sqrt(mean_squared_error(y_true_seg, y_pred_ensemble_seg))
-                        r2_base = r2_score(y_true_seg, y_pred_base_seg)
-                        r2_ensemble = r2_score(y_true_seg, y_pred_ensemble_seg)
+                        r2_base, _ = compute_r2_safe(y_true_seg, y_pred_base_seg, method='per_output_mean')
+                        r2_ensemble, _ = compute_r2_safe(y_true_seg, y_pred_ensemble_seg, method='per_output_mean')
 
                         improvement_mae = (mae_base - mae_ensemble) / mae_base * 100
                         improvement_rmse = (rmse_base - rmse_ensemble) / rmse_base * 100
@@ -2091,59 +2732,166 @@ def create_unified_interface():
         """)
 
         # Auto refresh dropdowns on page load
+        # Initial load: populate dropdowns and check for pre-loaded data
+        def initial_load():
+            """Load initial state including pre-loaded data from Colab"""
+            # Get dropdown choices
+            models = get_available_models()
+            residual_keys = get_residual_data_keys()
+            stage2_keys = get_stage2_model_keys()
+            ensemble_keys = get_ensemble_model_keys()
+
+            # Get available CSV files (safe - won't break interface)
+            csv_files = get_available_csv_files()
+
+            # Get available JSON config files
+            json_configs = get_available_json_configs()
+
+            # Get available inference config files
+            inference_configs = get_inference_config_files()
+
+            # Check for pre-loaded data (but don't auto-load)
+            status, preview_df, signals = check_preloaded_data()
+
+            # Get column choices if data exists
+            if global_state.get('df') is not None:
+                cols = list(global_state['df'].columns)
+            else:
+                cols = []
+
+            return (
+                gr.update(choices=models),
+                gr.update(choices=residual_keys),
+                gr.update(choices=stage2_keys),
+                gr.update(choices=ensemble_keys),
+                gr.update(choices=csv_files),  # Populate CSV file selector
+                gr.update(choices=json_configs),  # Populate JSON config selector
+                gr.update(choices=inference_configs),  # Populate inference config selector
+                status, signals, preview_df,
+                gr.update(choices=cols), gr.update(choices=cols)
+            )
+
         demo.load(
-            fn=lambda: (
-                gr.update(choices=get_available_models()),
-                gr.update(choices=get_residual_data_keys()),
-                gr.update(choices=get_stage2_model_keys()),
-                gr.update(choices=get_ensemble_model_keys())
-            ),
-            outputs=[model_selector, residual_data_selector_stage2,
-                     stage2_model_selector, ensemble_selector_reinf]
+            fn=initial_load,
+            outputs=[
+                model_selector, residual_data_selector_stage2,
+                stage2_model_selector, ensemble_selector_reinf,
+                csv_file_selector,  # CSV file selector
+                json_config_selector,  # JSON config selector (Tab2)
+                inference_config_selector,  # Inference config selector (Tab3)
+                data_status, signals_display, data_preview,
+                boundary_signals_static, target_signals_static
+            ]
         )
 
         # Data loading events
         def load_data_and_update(file_obj):
-            status, df, signals = load_data_from_csv(file_obj)
-            if df is not None:
-                cols = list(df.columns)
+            status, preview_df, signals = load_data_from_csv(file_obj)
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
                 return (
-                    status, signals,
+                    status, signals, preview_df,
                     gr.update(choices=cols), gr.update(choices=cols)
                 )
             return (
-                status, signals,
+                status, signals, None,
                 gr.update(choices=[]), gr.update(choices=[])
             )
 
         def create_sample_and_update():
-            status, df, signals = create_sample_data()
-            if df is not None:
-                cols = list(df.columns)
+            status, preview_df, signals = create_sample_data()
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
                 return (
-                    status, signals,
+                    status, signals, preview_df,
                     gr.update(choices=cols), gr.update(choices=cols)
                 )
             return (
-                status, signals,
+                status, signals, None,
                 gr.update(choices=[]), gr.update(choices=[])
             )
 
-        load_btn.click(
-            fn=load_data_and_update,
-            inputs=[data_file],
+        # CSV file selector event - load from data/ folder
+        def load_from_selector_and_update(csv_path):
+            status, preview_df, signals = load_csv_from_path(csv_path)
+            if preview_df is not None:
+                cols = list(global_state['df'].columns)
+                return (
+                    status, signals, preview_df,
+                    gr.update(choices=cols), gr.update(choices=cols)
+                )
+            return (
+                status, signals, None,
+                gr.update(choices=[]), gr.update(choices=[])
+            )
+
+        select_csv_btn.click(
+            fn=load_from_selector_and_update,
+            inputs=[csv_file_selector],
             outputs=[
-                data_status, signals_display,
+                data_status, signals_display, data_preview,
                 boundary_signals_static, target_signals_static
             ]
         )
 
+        # Refresh CSV file list
+        refresh_csv_btn.click(
+            fn=lambda: gr.update(choices=get_available_csv_files()),
+            outputs=[csv_file_selector]
+        )
+
+        # Upload button event - load from uploaded file
+        upload_btn.click(
+            fn=load_data_and_update,
+            inputs=[data_file],
+            outputs=[
+                data_status, signals_display, data_preview,
+                boundary_signals_static, target_signals_static
+            ]
+        )
+
+        # Sample button event - create sample data
         sample_btn.click(
             fn=create_sample_and_update,
             outputs=[
-                data_status, signals_display,
+                data_status, signals_display, data_preview,
                 boundary_signals_static, target_signals_static
             ]
+        )
+
+        # JSON配置加载事件
+        def load_json_from_selector(json_path):
+            """Load JSON config from dropdown selector"""
+            if not json_path:
+                return gr.update(), gr.update(), "⚠️ 请选择JSON配置文件"
+            boundary, target, status = load_signals_config_from_json(json_path)
+            return gr.update(value=boundary), gr.update(value=target), status
+
+        def load_json_from_upload(json_file):
+            """Load JSON config from uploaded file"""
+            if not json_file:
+                return gr.update(), gr.update(), "⚠️ 请上传JSON配置文件"
+            boundary, target, status = load_signals_config_from_json(json_file)
+            return gr.update(value=boundary), gr.update(value=target), status
+
+        # Load JSON from selector
+        load_json_btn.click(
+            fn=load_json_from_selector,
+            inputs=[json_config_selector],
+            outputs=[boundary_signals_static, target_signals_static, json_status]
+        )
+
+        # Load JSON from uploaded file
+        json_upload.change(
+            fn=load_json_from_upload,
+            inputs=[json_upload],
+            outputs=[boundary_signals_static, target_signals_static, json_status]
+        )
+
+        # Refresh JSON file list
+        refresh_json_btn.click(
+            fn=lambda: gr.update(choices=get_available_json_configs()),
+            outputs=[json_config_selector]
         )
 
         # Training按钮绑定
@@ -2155,6 +2903,7 @@ def create_unified_interface():
                 epochs_static, batch_size_static, lr_static,
                 d_model_static, nhead_static, num_layers_static, dropout_static,
                 test_size_static, val_size_static,
+                weight_decay_static, scheduler_patience_static, scheduler_factor_static, grad_clip_norm_static,
                 gr.State(value=None), gr.State(value=False)
             ],
             outputs=[training_log_static]
@@ -2167,27 +2916,54 @@ def create_unified_interface():
 # Launch application
 
 if __name__ == "__main__":
-    print("启动工业数字孪生残差Boost训练系统...")
-    demo = create_unified_interface()
-    print("界面创建完成，启动服务器...")
+    import sys
 
-    for port in range(7860, 7870):
-        try:
-            print(f"尝试端口 {port}...")
-            demo.launch(
-                server_name="127.0.0.1",
-                server_port=port,
-                share=False,
-                debug=True,
-                show_error=True,
-                quiet=False
-            )
-            print(f"服务器启动成功！")
-            print(f"访问地址: http://localhost:{port}")
-            print("=" * 80)
-            break
-        except OSError:
-            print(f"端口 {port} 被占用，尝试下一个...")
-            continue
+    print("启动工业数字孪生残差Boost训练系统...")
+    print("="*80)
+
+    # Check if running in Colab
+    try:
+        import google.colab
+        IN_COLAB = True
+        print("✅ 检测到Colab环境")
+    except:
+        IN_COLAB = False
+        print("✅ 本地环境")
+
+    demo = create_unified_interface()
+    print("✅ 界面创建完成")
+    print("="*80)
+
+    if IN_COLAB:
+        # Colab environment - use share=True for public URL
+        print("\n🌐 在Colab中启动Gradio...")
+        print("📝 提示：Gradio将生成一个公网链接")
+        demo.launch(
+            share=True,
+            debug=True,
+            show_error=True,
+            inline=False  # Use separate window
+        )
     else:
-        print("无法找到可用端口 (7860-7869)")
+        # Local environment - try multiple ports
+        print("\n🌐 在本地环境中启动Gradio...")
+        for port in range(7860, 7870):
+            try:
+                print(f"尝试端口 {port}...")
+                demo.launch(
+                    server_name="127.0.0.1",
+                    server_port=port,
+                    share=False,
+                    debug=True,
+                    show_error=True,
+                    quiet=False
+                )
+                print(f"✅ 服务器启动成功！")
+                print(f"🔗 访问地址: http://localhost:{port}")
+                print("="*80)
+                break
+            except OSError:
+                print(f"⚠️  端口 {port} 被占用，尝试下一个...")
+                continue
+        else:
+            print("❌ 无法找到可用端口 (7860-7869)")
