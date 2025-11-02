@@ -2061,6 +2061,46 @@ def load_model_from_path(model_path):
         return None, error_msg
 
 
+def load_model_from_path_ui(model_path):
+    """
+    UI wrapper for load_model_from_path to properly update dropdown
+
+    Args:
+        model_path: Path to model file
+
+    Returns:
+        tuple: (dropdown_update, status_msg)
+    """
+    model_name, status_msg = load_model_from_path(model_path)
+
+    if model_name:
+        # Update dropdown choices and set the value
+        return gr.update(choices=get_available_models(), value=model_name), status_msg
+    else:
+        # Just return status without updating dropdown
+        return gr.update(), status_msg
+
+
+def load_model_from_inference_config_path_ui(config_path):
+    """
+    UI wrapper for load_model_from_inference_config_path to properly update dropdown
+
+    Args:
+        config_path: Path to inference config file
+
+    Returns:
+        tuple: (dropdown_update, status_msg)
+    """
+    model_name, status_msg = load_model_from_inference_config_path(config_path)
+
+    if model_name:
+        # Update dropdown choices and set the value
+        return gr.update(choices=get_available_models(), value=model_name), status_msg
+    else:
+        # Just return status without updating dropdown
+        return gr.update(), status_msg
+
+
 def extract_residuals_ui(model_name):
     """UI function for residual extraction - full dataset inference"""
     try:
@@ -2480,7 +2520,7 @@ def create_unified_interface():
 
                 # Load inference config from selector
                 load_inference_btn.click(
-                    fn=load_model_from_inference_config_path,
+                    fn=load_model_from_inference_config_path_ui,
                     inputs=[inference_config_selector],
                     outputs=[model_selector, inference_load_status]
                 )
@@ -2493,7 +2533,7 @@ def create_unified_interface():
 
                 # Load model file
                 load_model_file_btn.click(
-                    fn=load_model_from_path,
+                    fn=load_model_from_path_ui,
                     inputs=[model_file_selector],
                     outputs=[model_selector, model_load_status]
                 )
