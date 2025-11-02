@@ -991,6 +991,313 @@ def train_stage2_boost_model(
         return error_msg, {}
 
 
+def train_stage2_boost_model_generator(residual_data_key: str, config: Dict[str, Any], progress=None):
+    """
+    Generator version of train_stage2_boost_model for real-time log updates
+
+    Yields:
+        Current log message string after each progress update
+    """
+    try:
+        if residual_data_key not in global_state['residual_data']:
+            yield "❌ 残差数据不存在！"
+            return
+
+        log_msg = []
+        log_msg.append("=" * 80)
+        log_msg.append("🚀 开始训练 Stage2 Boost 残差模型")
+        log_msg.append("=" * 80)
+
+        # Get residual data
+        residuals_df = global_state['residual_data'][residual_data_key]['data']
+        residual_info = global_state['residual_data'][residual_data_key]['info']
+
+        boundary_signals = residual_info['boundary_signals']
+        target_signals = residual_info['target_signals']
+        residual_signals = residual_info['residual_signals']
+
+        log_msg.append(f"\n📊 数据信息:")
+        log_msg.append(f"  残差数据: {residual_data_key}")
+        log_msg.append(f"  边界信号数: {len(boundary_signals)}")
+        log_msg.append(f"  目标信号数: {len(target_signals)}")
+        log_msg.append(f"  数据长度: {len(residuals_df)}")
+
+        yield "\n".join(log_msg)
+
+        # Prepare training data
+        X = residuals_df[boundary_signals].values
+        y_residual = residuals_df[residual_signals].values
+
+        # Data split
+        train_size = int(len(X) * (1 - config['test_size'] - config['val_size']))
+        val_size = int(len(X) * config['val_size'])
+
+        X_train = X[:train_size]
+        X_val = X[train_size:train_size + val_size]
+        X_test = X[train_size + val_size:]
+
+        y_train = y_residual[:train_size]
+        y_val = y_residual[train_size:train_size + val_size]
+        y_test = y_residual[train_size + val_size:]
+
+        log_msg.append(f"\n🔀 数据分割:")
+        log_msg.append(f"  训练集: {len(X_train)} ({len(X_train) / len(X) * 100:.1f}%)")
+        log_msg.append(f"  验证集: {len(X_val)} ({len(X_val) / len(X) * 100:.1f}%)")
+        log_msg.append(f"  测试集: {len(X_test)} ({len(X_test) / len(X) * 100:.1f}%)")
+
+        # Data standardization
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
+
+        X_train_scaled = scaler_X.fit_transform(X_train)
+        X_val_scaled = scaler_X.transform(X_val)
+        X_test_scaled = scaler_X.transform(X_test)
+
+        y_train_scaled = scaler_y.fit_transform(y_train)
+        y_val_scaled = scaler_y.transform(y_val)
+        y_test_scaled = scaler_y.transform(y_test)
+
+        # Create DataLoader
+        train_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(X_train_scaled),
+            torch.FloatTensor(y_train_scaled)
+        )
+        val_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(X_val_scaled),
+            torch.FloatTensor(y_val_scaled)
+        )
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=config['batch_size'], shuffle=True
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=config['batch_size'], shuffle=False
+        )
+
+        # Initialize Stage2 model
+        log_msg.append(f"\n🏗️ 初始化Stage2残差模型:")
+        log_msg.append(f"  架构: StaticSensorTransformer")
+        log_msg.append(f"  d_model: {config['d_model']}")
+        log_msg.append(f"  nhead: {config['nhead']}")
+        log_msg.append(f"  num_layers: {config['num_layers']}")
+
+        stage2_model = StaticSensorTransformer(
+            num_boundary_sensors=len(boundary_signals),
+            num_target_sensors=len(target_signals),
+            d_model=config['d_model'],
+            nhead=config['nhead'],
+            num_layers=config['num_layers'],
+            dropout=config['dropout']
+        ).to(device)
+
+        # Optimizer and scheduler
+        optimizer = torch.optim.AdamW(
+            stage2_model.parameters(),
+            lr=config['lr'],
+            weight_decay=config.get('weight_decay', 1e-5)
+        )
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min',
+            factor=config.get('scheduler_factor', 0.7),
+            patience=config.get('scheduler_patience', 15)
+        )
+        log_msg.append(f"📊 学习率调度器: ReduceLROnPlateau")
+
+        criterion = nn.MSELoss()
+        scaler_amp = GradScaler()
+
+        # Training loop
+        log_msg.append(f"\n🎯 开始训练 (混合精度, 总轮数: {config['epochs']})")
+        yield "\n".join(log_msg)
+
+        history = {
+            'train_losses': [], 'val_losses': [],
+            'train_r2': [], 'val_r2': [],
+            'train_mae': [], 'val_mae': []
+        }
+
+        best_val_loss = float('inf')
+        patience_counter = 0
+        early_stop_patience = config.get('early_stop_patience', 25)
+
+        for epoch in range(config['epochs']):
+            # Training phase
+            stage2_model.train()
+            train_loss = 0.0
+            train_preds = []
+            train_targets = []
+
+            for batch_X, batch_y in train_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                optimizer.zero_grad()
+
+                with autocast():
+                    outputs = stage2_model(batch_X)
+                    loss = criterion(outputs, batch_y)
+
+                scaler_amp.scale(loss).backward()
+                scaler_amp.unscale_(optimizer)
+
+                if config.get('grad_clip', 0) > 0:
+                    torch.nn.utils.clip_grad_norm_(stage2_model.parameters(), config['grad_clip'])
+
+                scaler_amp.step(optimizer)
+                scaler_amp.update()
+
+                train_loss += loss.item()
+                train_preds.append(outputs.detach().cpu().numpy())
+                train_targets.append(batch_y.detach().cpu().numpy())
+
+            train_loss /= len(train_loader)
+            train_preds = np.vstack(train_preds)
+            train_targets = np.vstack(train_targets)
+            train_r2, _ = compute_r2_safe(train_targets, train_preds, method='per_output_mean')
+            train_mae = mean_absolute_error(train_targets, train_preds)
+
+            # Validation phase
+            stage2_model.eval()
+            val_loss = 0.0
+            val_preds = []
+            val_targets = []
+
+            with torch.no_grad():
+                for batch_X, batch_y in val_loader:
+                    batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                    with autocast():
+                        outputs = stage2_model(batch_X)
+                        loss = criterion(outputs, batch_y)
+
+                    val_loss += loss.item()
+                    val_preds.append(outputs.cpu().numpy())
+                    val_targets.append(batch_y.cpu().numpy())
+
+            val_loss /= len(val_loader)
+            val_preds = np.vstack(val_preds)
+            val_targets = np.vstack(val_targets)
+            val_r2, _ = compute_r2_safe(val_targets, val_preds, method='per_output_mean')
+            val_mae = mean_absolute_error(val_targets, val_preds)
+
+            # Record history
+            history['train_losses'].append(train_loss)
+            history['val_losses'].append(val_loss)
+            history['train_r2'].append(train_r2)
+            history['val_r2'].append(val_r2)
+            history['train_mae'].append(train_mae)
+            history['val_mae'].append(val_mae)
+
+            scheduler.step(val_loss)
+
+            # Early stopping check
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                best_model_state = stage2_model.state_dict().copy()
+            else:
+                patience_counter += 1
+
+            # Progress output - yield updates periodically
+            if (epoch + 1) % max(1, config['epochs'] // 20) == 0 or epoch == 0 or epoch == config['epochs'] - 1:
+                current_lr = optimizer.param_groups[0]['lr']
+                train_rmse = np.sqrt(train_loss)
+                val_rmse = np.sqrt(val_loss)
+
+                msg = f"\nEpoch {epoch + 1}/{config['epochs']}"
+                msg += f"\n  📉 Train: Loss={train_loss:.4f}, RMSE={train_rmse:.4f}, MAE={train_mae:.4f}, R²={train_r2:.4f}"
+                msg += f"\n  📊 Val:   Loss={val_loss:.4f}, RMSE={val_rmse:.4f}, MAE={val_mae:.4f}, R²={val_r2:.4f}"
+                msg += f"\n  🎯 Val/Train Ratio: {val_loss/train_loss:.2f}x"
+                msg += f"\n  📚 LR: {current_lr:.2e}"
+                log_msg.append(msg)
+
+                if progress:
+                    progress((epoch + 1) / config['epochs'], desc=f"Epoch {epoch+1}/{config['epochs']} - Val R²: {val_r2:.4f}")
+
+                # Yield current log state
+                yield "\n".join(log_msg)
+
+            # Early stopping
+            if patience_counter >= early_stop_patience:
+                log_msg.append(f"\n⏸️ 早停触发 (Epoch {epoch + 1})")
+                yield "\n".join(log_msg)
+                break
+
+        # Load best model
+        stage2_model.load_state_dict(best_model_state)
+
+        # Test set evaluation
+        y_test_pred = batch_inference(
+            stage2_model, X_test, scaler_X, scaler_y, device,
+            batch_size=config['batch_size'], model_name="Stage2"
+        )
+
+        test_mae = mean_absolute_error(y_test, y_test_pred)
+        test_rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
+        test_r2, _ = compute_r2_safe(y_test, y_test_pred, method='per_output_mean')
+
+        # Training history summary
+        log_msg.append(f"\n📈 训练历史总结 ({len(history['train_losses'])} epochs):")
+        log_msg.append(f"  最佳验证Loss: {best_val_loss:.4f} (Epoch {np.argmin(history['val_losses']) + 1})")
+        log_msg.append(f"  最佳验证R²: {max(history['val_r2']):.4f} (Epoch {np.argmax(history['val_r2']) + 1})")
+        log_msg.append(f"  最佳验证MAE: {min(history['val_mae']):.4f} (Epoch {np.argmin(history['val_mae']) + 1})")
+
+        log_msg.append(f"\n📊 测试集性能:")
+        log_msg.append(f"  MAE: {test_mae:.6f}")
+        log_msg.append(f"  RMSE: {test_rmse:.6f}")
+        log_msg.append(f"  R²: {test_r2:.4f}")
+
+        # Save model
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        model_name = f"Stage2_Boost_{residual_data_key}_{timestamp}"
+
+        model_dir = "saved_models/stage2_boost"
+        os.makedirs(model_dir, exist_ok=True)
+
+        model_path = os.path.join(model_dir, f"{model_name}.pth")
+        torch.save({
+            'model_state_dict': stage2_model.state_dict(),
+            'config': config,
+            'history': history,
+            'residual_data_key': residual_data_key,
+            'boundary_signals': boundary_signals,
+            'target_signals': target_signals,
+            'residual_signals': residual_signals,
+            'test_metrics': {'mae': test_mae, 'rmse': test_rmse, 'r2': test_r2}
+        }, model_path)
+
+        # Save scalers
+        scaler_path = os.path.join(model_dir, f"{model_name}_scalers.pkl")
+        with open(scaler_path, 'wb') as f:
+            pickle.dump({'X': scaler_X, 'y': scaler_y}, f)
+
+        # Save to global state
+        global_state['stage2_models'][model_name] = {
+            'model': stage2_model,
+            'config': config,
+            'history': history,
+            'residual_data_key': residual_data_key,
+            'boundary_signals': boundary_signals,
+            'target_signals': target_signals,
+            'residual_signals': residual_signals,
+            'model_path': model_path,
+            'scaler_path': scaler_path,
+            'test_metrics': {'mae': test_mae, 'rmse': test_rmse, 'r2': test_r2}
+        }
+
+        global_state['stage2_scalers'][model_name] = {'X': scaler_X, 'y': scaler_y}
+
+        log_msg.append(f"\n✅ Stage2模型训练完成并保存:")
+        log_msg.append(f"  模型名称: {model_name}")
+        log_msg.append(f"  模型路径: {model_path}")
+        log_msg.append(f"  Scaler路径: {scaler_path}")
+
+        yield "\n".join(log_msg)
+
+    except Exception as e:
+        error_msg = f"❌ Stage2模型训练失败:\n{str(e)}\n\n{traceback.format_exc()}"
+        print(error_msg)
+        yield error_msg
+
+
 def compute_signal_r2_and_select_threshold(
         base_model_name: str,
         stage2_model_name: str,
@@ -2612,10 +2919,11 @@ def create_unified_interface():
                         )
 
                 # Stage2Training函数
-                def train_stage2_ui(residual_data_key, d_model, nhead, num_layers, dropout,
-                                    epochs, batch_size, lr, weight_decay, grad_clip,
-                                    scheduler_patience, scheduler_factor,
-                                    test_size, val_size, progress=gr.Progress()):
+                def train_stage2_ui_generator(residual_data_key, d_model, nhead, num_layers, dropout,
+                                             epochs, batch_size, lr, weight_decay, grad_clip,
+                                             scheduler_patience, scheduler_factor,
+                                             test_size, val_size, progress=gr.Progress()):
+                    """Generator function for real-time log updates"""
 
                     config = {
                         'd_model': int(d_model),
@@ -2634,12 +2942,22 @@ def create_unified_interface():
                         'early_stop_patience': 25
                     }
 
-                    # Call training function with progress parameter
-                    status_msg, results = train_stage2_boost_model(
-                        residual_data_key, config, progress=progress
-                    )
+                    # Yield initial message
+                    yield "🚀 正在初始化Stage2训练...\n"
 
-                    return status_msg
+                    # Import here to avoid circular dependency
+                    import time
+
+                    # Call training function and yield intermediate results
+                    try:
+                        # Run the training in a way that allows yielding
+                        # This is a workaround since train_stage2_boost_model is not a generator
+                        final_status = ""
+                        for update in train_stage2_boost_model_generator(residual_data_key, config, progress):
+                            yield update
+                            final_status = update
+                    except Exception as e:
+                        yield f"❌ 训练失败:\n{str(e)}\n\n{traceback.format_exc()}"
 
                 refresh_residual_btn_stage2.click(
                     fn=lambda: gr.update(choices=get_residual_data_keys()),
@@ -2647,7 +2965,7 @@ def create_unified_interface():
                 )
 
                 train_stage2_btn.click(
-                    fn=train_stage2_ui,
+                    fn=train_stage2_ui_generator,
                     inputs=[
                         residual_data_selector_stage2,
                         d_model_stage2, nhead_stage2, num_layers_stage2, dropout_stage2,
