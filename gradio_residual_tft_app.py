@@ -1850,6 +1850,35 @@ def get_scalers_files():
         return []
 
 
+def get_model_files():
+    """
+    Get list of model pth files in saved_models folder
+
+    Returns:
+        List of model file paths
+    """
+    try:
+        import glob
+
+        model_files = []
+
+        # Search in saved_models folder and subdirectories
+        if os.path.exists('saved_models'):
+            # Get all .pth files, excluding scalers
+            all_pth_files = glob.glob('saved_models/**/*.pth', recursive=True)
+            # Filter out files that are not model files (e.g., optimizer states)
+            model_files = [f for f in all_pth_files if not f.endswith('_scalers.pth')]
+
+        # Sort by modification time (newest first)
+        model_files = sorted(model_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+
+        return model_files if model_files else []
+
+    except Exception as e:
+        print(f"⚠️ Error in get_model_files: {e}")
+        return []
+
+
 def load_model_from_inference_config_path(config_path):
     """
     Load model from inference config file path
@@ -1938,6 +1967,98 @@ def load_scalers_from_path(scaler_path, model_name):
         error_msg = f"❌ Scalers加载失败:\n{str(e)}\n\n{traceback.format_exc()}"
         print(error_msg)
         return error_msg
+
+
+def load_model_from_path(model_path):
+    """
+    Load SST model from a .pth file path
+
+    Args:
+        model_path: Path to model .pth file
+
+    Returns:
+        model_name: Loaded model name
+        status_msg: Status message
+    """
+    try:
+        if not model_path:
+            return None, "❌ 请选择模型文件！"
+
+        if not os.path.exists(model_path):
+            return None, f"❌ 文件不存在: {model_path}"
+
+        # Extract model name from path
+        model_name = os.path.splitext(os.path.basename(model_path))[0]
+
+        # Load checkpoint
+        checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+
+        if 'model_config' not in checkpoint:
+            return None, f"❌ 模型文件格式错误: 缺少model_config"
+
+        model_config = checkpoint['model_config']
+
+        if model_config.get('type') != 'StaticSensorTransformer':
+            return None, f"❌ 不支持的模型类型: {model_config.get('type')}"
+
+        boundary_signals = model_config['boundary_signals']
+        target_signals = model_config['target_signals']
+        config = model_config['config']
+
+        # Create model
+        model = StaticSensorTransformer(
+            num_boundary_sensors=len(boundary_signals),
+            num_target_sensors=len(target_signals),
+            d_model=config['d_model'],
+            nhead=config['nhead'],
+            num_layers=config['num_layers'],
+            dropout=config['dropout']
+        ).to(device)
+
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+
+        # Try to load scalers from checkpoint
+        scalers = None
+        scaler_source = "未加载"
+        if 'scalers' in checkpoint:
+            scalers = checkpoint['scalers']
+            scaler_source = "从checkpoint加载"
+            # Also save to manual_scalers for consistency
+            if 'manual_scalers' not in global_state:
+                global_state['manual_scalers'] = {}
+            global_state['manual_scalers'][model_name] = scalers
+
+        # Save to global state
+        global_state['trained_models'][model_name] = {
+            'model': model,
+            'type': model_config['type'],
+            'boundary_signals': boundary_signals,
+            'target_signals': target_signals,
+            'config': config,
+            'model_path': model_path,
+            'scaler_path': model_path.replace('.pth', '_scalers.pkl')
+        }
+
+        success_msg = f"✅ SST模型加载成功!\n\n"
+        success_msg += f"📌 Model name: {model_name}\n"
+        success_msg += f"📊 Model type: {model_config['type']}\n"
+        success_msg += f"🎯 边界信号数: {len(boundary_signals)}\n"
+        success_msg += f"📈 目标信号数: {len(target_signals)}\n"
+        success_msg += f"⚙️ 模型参数: d_model={config['d_model']}, nhead={config['nhead']}, layers={config['num_layers']}\n"
+        success_msg += f"📊 Scalers状态: {scaler_source}\n"
+
+        if scalers is None:
+            success_msg += f"\n⚠️ 提示: 该模型checkpoint中不包含scalers\n"
+            success_msg += f"   如需提取残差，请从下方'加载Scalers文件'区域手动加载\n"
+
+        print(success_msg)
+        return model_name, success_msg
+
+    except Exception as e:
+        error_msg = f"❌ 模型加载失败:\n{str(e)}\n\n{traceback.format_exc()}"
+        print(error_msg)
+        return None, error_msg
 
 
 def extract_residuals_ui(model_name):
@@ -2315,6 +2436,18 @@ def create_unified_interface():
 
                         inference_load_status = gr.Textbox(label="配置加载状态", lines=3, interactive=False)
 
+                        gr.Markdown("### 🤖 加载SST模型文件（可选）")
+                        gr.Markdown("从saved_models文件夹选择.pth模型文件直接加载")
+                        model_file_selector = gr.Dropdown(
+                            choices=[],
+                            label="选择saved_models文件夹下的模型文件",
+                            info="选择 *.pth 文件"
+                        )
+                        with gr.Row():
+                            load_model_file_btn = gr.Button("📥 加载模型", size="sm", variant="secondary")
+                            refresh_model_files_btn = gr.Button("🔄 刷新模型列表", size="sm")
+                        model_load_status = gr.Textbox(label="模型加载状态", lines=3, interactive=False)
+
                         gr.Markdown("### 📊 加载Scalers文件（可选）")
                         gr.Markdown("如果模型checkpoint中不包含scalers，从saved_models文件夹选择")
                         scalers_file_selector = gr.Dropdown(
@@ -2350,6 +2483,19 @@ def create_unified_interface():
                     fn=load_model_from_inference_config_path,
                     inputs=[inference_config_selector],
                     outputs=[model_selector, inference_load_status]
+                )
+
+                # Refresh model file list
+                refresh_model_files_btn.click(
+                    fn=lambda: gr.update(choices=get_model_files()),
+                    outputs=[model_file_selector]
+                )
+
+                # Load model file
+                load_model_file_btn.click(
+                    fn=load_model_from_path,
+                    inputs=[model_file_selector],
+                    outputs=[model_selector, model_load_status]
                 )
 
                 # Refresh scalers file list
