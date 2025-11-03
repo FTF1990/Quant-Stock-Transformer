@@ -1031,22 +1031,37 @@ def train_stage2_boost_model_generator(residual_data_key: str, config: Dict[str,
         X = residuals_df[boundary_signals].values
         y_residual = residuals_df[residual_signals].values
 
-        # Data split
-        train_size = int(len(X) * (1 - config['test_size'] - config['val_size']))
-        val_size = int(len(X) * config['val_size'])
+        # IMPORTANT: Use RANDOM split instead of sequential split
+        # This prevents distribution mismatch between train/val/test sets
+        # Sequential split causes issues because:
+        #   - Early data (Stage1 train set) has small residuals
+        #   - Late data (Stage1 test set) has large residuals
+        #   - This leads to train/test distribution mismatch
 
-        X_train = X[:train_size]
-        X_val = X[train_size:train_size + val_size]
-        X_test = X[train_size + val_size:]
+        from sklearn.model_selection import train_test_split
 
-        y_train = y_residual[:train_size]
-        y_val = y_residual[train_size:train_size + val_size]
-        y_test = y_residual[train_size + val_size:]
+        # First split: separate test set
+        X_temp, X_test, y_temp, y_test = train_test_split(
+            X, y_residual,
+            test_size=config['test_size'],
+            random_state=42,
+            shuffle=True
+        )
 
-        log_msg.append(f"\n🔀 数据分割:")
+        # Second split: separate train and validation sets
+        val_ratio = config['val_size'] / (1 - config['test_size'])
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_temp, y_temp,
+            test_size=val_ratio,
+            random_state=42,
+            shuffle=True
+        )
+
+        log_msg.append(f"\n🔀 数据分割 (随机分割，避免分布不一致):")
         log_msg.append(f"  训练集: {len(X_train)} ({len(X_train) / len(X) * 100:.1f}%)")
         log_msg.append(f"  验证集: {len(X_val)} ({len(X_val) / len(X) * 100:.1f}%)")
         log_msg.append(f"  测试集: {len(X_test)} ({len(X_test) / len(X) * 100:.1f}%)")
+        log_msg.append(f"  💡 使用随机shuffle确保各集合分布一致")
 
         # Data standardization
         scaler_X = StandardScaler()
