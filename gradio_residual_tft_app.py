@@ -1358,28 +1358,39 @@ def train_stage2_boost_model_generator(residual_data_key: str, config: Dict[str,
 
 def create_ensemble_visualization(ensemble_info: Dict[str, Any]):
     """
-    为综合模型创建可视化图表
+    Create visualization charts for ensemble model
 
-    包含：
-    1. 所有信号的R²对比柱状图
-    2. Delta R²分布图
-    3. 选择信号的饼图
-    4. 预测效果对比（随机选择几个信号）
+    Contains:
+    1. R² comparison bar chart for all signals
+    2. Delta R² distribution chart
+    3. Signal selection pie chart
+    4. Overall performance comparison
     """
     try:
         import matplotlib.pyplot as plt
         import matplotlib
         matplotlib.use('Agg')
+        # Set font to avoid Chinese character issues
+        plt.rcParams['font.family'] = 'DejaVu Sans'
 
         signal_analysis = ensemble_info['signal_analysis']
         target_signals = ensemble_info['signals']['target']
+        num_signals = len(signal_analysis)
 
-        # 创建2x2子图
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle(f'综合模型分析 - {ensemble_info["name"]}', fontsize=16, fontweight='bold')
+        # Determine grid layout based on number of signals
+        # Top row: R² comparison and Delta R² distribution
+        # Bottom rows: Performance comparison + individual signal plots
+        n_signal_plots = min(6, num_signals)  # Show up to 6 individual signals
+        fig = plt.figure(figsize=(20, 14))
 
-        # 图1: R²对比柱状图
-        ax = axes[0, 0]
+        # Create grid: 3 rows, with top 2 rows split differently
+        gs = fig.add_gridspec(4, 4, hspace=0.3, wspace=0.3)
+
+        fig.suptitle(f'Ensemble Model Analysis - {ensemble_info["name"]}',
+                     fontsize=16, fontweight='bold')
+
+        # Plot 1: R² comparison bar chart (top left, spans 2 columns)
+        ax1 = fig.add_subplot(gs[0, :2])
         signals = [item['signal'] for item in signal_analysis]
         r2_stage1 = [item['r2_stage1'] for item in signal_analysis]
         r2_ensemble = [item['r2_ensemble'] for item in signal_analysis]
@@ -1387,90 +1398,125 @@ def create_ensemble_visualization(ensemble_info: Dict[str, Any]):
         x = np.arange(len(signals))
         width = 0.35
 
-        ax.bar(x - width/2, r2_stage1, width, label='Stage1', alpha=0.8, color='skyblue')
-        ax.bar(x + width/2, r2_ensemble, width, label='Ensemble', alpha=0.8, color='orange')
+        ax1.bar(x - width/2, r2_stage1, width, label='Stage1', alpha=0.8, color='skyblue')
+        ax1.bar(x + width/2, r2_ensemble, width, label='Ensemble', alpha=0.8, color='orange')
 
-        ax.set_xlabel('信号', fontsize=10)
-        ax.set_ylabel('R² 分数', fontsize=10)
-        ax.set_title('所有信号的R²对比', fontsize=12, fontweight='bold')
-        ax.set_xticks(x)
-        ax.set_xticklabels(signals, rotation=45, ha='right', fontsize=8)
-        ax.legend()
-        ax.grid(axis='y', alpha=0.3)
-        ax.axhline(y=0, color='k', linestyle='-', linewidth=0.5)
+        ax1.set_xlabel('Signals', fontsize=10)
+        ax1.set_ylabel('R² Score', fontsize=10)
+        ax1.set_title('R² Comparison for All Signals', fontsize=12, fontweight='bold')
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(signals, rotation=45, ha='right', fontsize=8)
+        ax1.legend()
+        ax1.grid(axis='y', alpha=0.3)
+        ax1.axhline(y=0, color='k', linestyle='-', linewidth=0.5)
 
-        # 图2: Delta R²分布图
-        ax = axes[0, 1]
+        # Plot 2: Delta R² distribution (top right, spans 2 columns)
+        ax2 = fig.add_subplot(gs[0, 2:])
         delta_r2_values = [item['delta_r2'] for item in signal_analysis]
         colors = ['green' if item['use_stage2'] else 'gray' for item in signal_analysis]
 
-        bars = ax.barh(signals, delta_r2_values, color=colors, alpha=0.7)
-        ax.axvline(x=ensemble_info['delta_r2_threshold'], color='red', linestyle='--',
-                   linewidth=2, label=f'阈值 ({ensemble_info["delta_r2_threshold"]:.3f})')
-        ax.axvline(x=0, color='k', linestyle='-', linewidth=0.5)
+        bars = ax2.barh(signals, delta_r2_values, color=colors, alpha=0.7)
+        ax2.axvline(x=ensemble_info['delta_r2_threshold'], color='red', linestyle='--',
+                   linewidth=2, label=f'Threshold ({ensemble_info["delta_r2_threshold"]:.3f})')
+        ax2.axvline(x=0, color='k', linestyle='-', linewidth=0.5)
 
-        ax.set_xlabel('Delta R² (Ensemble - Stage1)', fontsize=10)
-        ax.set_ylabel('信号', fontsize=10)
-        ax.set_title('Delta R²分布 (绿色=使用Stage2, 灰色=仅Stage1)', fontsize=12, fontweight='bold')
-        ax.legend()
-        ax.grid(axis='x', alpha=0.3)
+        ax2.set_xlabel('Delta R² (Ensemble - Stage1)', fontsize=10)
+        ax2.set_ylabel('Signals', fontsize=10)
+        ax2.set_title('Delta R² Distribution (Green=Use Stage2, Gray=Stage1 Only)',
+                     fontsize=12, fontweight='bold')
+        ax2.legend()
+        ax2.grid(axis='x', alpha=0.3)
 
-        # 图3: 选择策略饼图
-        ax = axes[1, 0]
+        # Plot 3: Selection strategy pie chart (middle left)
+        ax3 = fig.add_subplot(gs[1, :2])
         num_use_stage2 = ensemble_info['num_use_stage2']
         num_use_stage1 = ensemble_info['num_use_stage1_only']
 
         sizes = [num_use_stage2, num_use_stage1]
-        labels = [f'Stage1+Stage2\n({num_use_stage2}个)', f'仅Stage1\n({num_use_stage1}个)']
+        labels = [f'Stage1+Stage2\n({num_use_stage2} signals)',
+                 f'Stage1 Only\n({num_use_stage1} signals)']
         colors_pie = ['#ff9999', '#66b3ff']
         explode = (0.05, 0)
 
-        ax.pie(sizes, explode=explode, labels=labels, colors=colors_pie, autopct='%1.1f%%',
+        ax3.pie(sizes, explode=explode, labels=labels, colors=colors_pie, autopct='%1.1f%%',
                shadow=True, startangle=90, textprops={'fontsize': 11})
-        ax.set_title('信号选择策略分布', fontsize=12, fontweight='bold')
+        ax3.set_title('Signal Selection Strategy Distribution', fontsize=12, fontweight='bold')
 
-        # 图4: 整体性能对比
-        ax = axes[1, 1]
+        # Plot 4: Overall performance comparison (middle right)
+        ax4 = fig.add_subplot(gs[1, 2:])
         metrics = ensemble_info['metrics']
 
         categories = ['MAE', 'RMSE', 'R²']
         stage1_values = [metrics['stage1']['mae'], metrics['stage1']['rmse'], metrics['stage1']['r2']]
         ensemble_values = [metrics['ensemble']['mae'], metrics['ensemble']['rmse'], metrics['ensemble']['r2']]
 
-        # 归一化显示（R²本身就是0-1，MAE和RMSE需要归一化）
-        max_mae_rmse = max(max(stage1_values[:2]), max(ensemble_values[:2]))
+        # Normalize for display (R² is 0-1, MAE and RMSE need normalization)
+        max_mae_rmse = max(max(stage1_values[:2]), max(ensemble_values[:2])) if max(stage1_values[:2]) > 0 else 1
         stage1_normalized = [stage1_values[0]/max_mae_rmse, stage1_values[1]/max_mae_rmse, stage1_values[2]]
         ensemble_normalized = [ensemble_values[0]/max_mae_rmse, ensemble_values[1]/max_mae_rmse, ensemble_values[2]]
 
-        x = np.arange(len(categories))
+        x_pos = np.arange(len(categories))
         width = 0.35
 
-        bars1 = ax.bar(x - width/2, stage1_normalized, width, label='Stage1', alpha=0.8, color='skyblue')
-        bars2 = ax.bar(x + width/2, ensemble_normalized, width, label='Ensemble', alpha=0.8, color='orange')
+        bars1 = ax4.bar(x_pos - width/2, stage1_normalized, width, label='Stage1', alpha=0.8, color='skyblue')
+        bars2 = ax4.bar(x_pos + width/2, ensemble_normalized, width, label='Ensemble', alpha=0.8, color='orange')
 
-        ax.set_ylabel('归一化值', fontsize=10)
-        ax.set_title('整体性能对比 (测试集)', fontsize=12, fontweight='bold')
-        ax.set_xticks(x)
-        ax.set_xticklabels(categories)
-        ax.legend()
-        ax.grid(axis='y', alpha=0.3)
+        ax4.set_ylabel('Normalized Value', fontsize=10)
+        ax4.set_title('Overall Performance Comparison (Test Set)', fontsize=12, fontweight='bold')
+        ax4.set_xticks(x_pos)
+        ax4.set_xticklabels(categories)
+        ax4.legend()
+        ax4.grid(axis='y', alpha=0.3)
 
-        # 添加实际值标注
+        # Add actual value annotations
         for i, (bar1, bar2) in enumerate(zip(bars1, bars2)):
             height1 = bar1.get_height()
             height2 = bar2.get_height()
-            ax.text(bar1.get_x() + bar1.get_width()/2., height1,
+            ax4.text(bar1.get_x() + bar1.get_width()/2., height1,
                    f'{stage1_values[i]:.4f}',
                    ha='center', va='bottom', fontsize=8)
-            ax.text(bar2.get_x() + bar2.get_width()/2., height2,
+            ax4.text(bar2.get_x() + bar2.get_width()/2., height2,
                    f'{ensemble_values[i]:.4f}',
                    ha='center', va='bottom', fontsize=8)
+
+        # Plot 5-10: Individual signal predictions (bottom two rows, up to 6 signals)
+        predictions = ensemble_info.get('predictions', {})
+        if predictions:
+            y_true = predictions.get('y_true')
+            y_pred_base = predictions.get('y_pred_base')
+            y_pred_ensemble = predictions.get('y_pred_ensemble')
+
+            if y_true is not None and y_pred_base is not None and y_pred_ensemble is not None:
+                plot_samples = min(200, len(y_true))
+
+                for idx in range(n_signal_plots):
+                    if idx >= num_signals:
+                        break
+
+                    row = 2 + idx // 3  # Start from row 2
+                    col = (idx % 3)
+                    if col < 2:
+                        ax = fig.add_subplot(gs[row, col*2:(col+1)*2])
+                    else:
+                        ax = fig.add_subplot(gs[row, 2:])
+
+                    signal_name = signals[idx] if idx < len(signals) else f'Signal {idx+1}'
+
+                    ax.plot(y_true[:plot_samples, idx], label='True', alpha=0.7, linewidth=1.5)
+                    ax.plot(y_pred_base[:plot_samples, idx], label='Base', alpha=0.7, linewidth=1.5)
+                    ax.plot(y_pred_ensemble[:plot_samples, idx], label='Ensemble', alpha=0.7, linewidth=1.5)
+
+                    ax.set_title(f'{signal_name}', fontsize=10, fontweight='bold')
+                    ax.legend(fontsize=8)
+                    ax.set_xlabel('Sample Index', fontsize=8)
+                    ax.set_ylabel('Value', fontsize=8)
+                    ax.grid(alpha=0.3)
 
         plt.tight_layout()
         return fig
 
     except Exception as e:
-        print(f"⚠️ 可视化生成失败: {e}")
+        print(f"Visualization generation failed: {e}")
         traceback.print_exc()
         return None
 
@@ -2915,7 +2961,7 @@ def get_stage2_model_keys():
 
 def get_stage2_inference_config_files():
     """
-    Get list of Stage2 inference config JSON files in saved_models/tft_models folder
+    Get list of Stage2 inference config JSON files in saved_models/stage2_boost folder
 
     Returns:
         List of Stage2 inference config file paths
@@ -2925,9 +2971,9 @@ def get_stage2_inference_config_files():
 
         config_files = []
 
-        # Search in saved_models/tft_models folder
-        if os.path.exists('saved_models/tft_models'):
-            config_files.extend(glob.glob('saved_models/tft_models/*_inference.json', recursive=False))
+        # Search in saved_models/stage2_boost folder
+        if os.path.exists('saved_models/stage2_boost'):
+            config_files.extend(glob.glob('saved_models/stage2_boost/*_inference.json', recursive=False))
 
         # Sort by modification time (newest first)
         config_files = sorted(config_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
@@ -2941,7 +2987,7 @@ def get_stage2_inference_config_files():
 
 def get_stage2_model_files():
     """
-    Get list of Stage2 model .pth files in saved_models/tft_models folder
+    Get list of Stage2 model .pth files in saved_models/stage2_boost folder
 
     Returns:
         List of Stage2 model file paths
@@ -2951,9 +2997,9 @@ def get_stage2_model_files():
 
         model_files = []
 
-        # Search in saved_models/tft_models folder
-        if os.path.exists('saved_models/tft_models'):
-            model_files.extend(glob.glob('saved_models/tft_models/*.pth', recursive=False))
+        # Search in saved_models/stage2_boost folder
+        if os.path.exists('saved_models/stage2_boost'):
+            model_files.extend(glob.glob('saved_models/stage2_boost/*.pth', recursive=False))
 
         # Sort by modification time (newest first)
         model_files = sorted(model_files, key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
@@ -3005,26 +3051,34 @@ def load_stage2_from_inference_config(config_path):
         else:
             return None, "❌ 未找到 scalers！请确保配置文件中包含 scaler_path 或模型 checkpoint 中包含 scalers。"
 
-        # Extract model config and training config
-        model_config = checkpoint.get('model_config', {})
-        training_config = checkpoint.get('training_config', {})
-        residual_data_key = checkpoint.get('residual_data_key', 'unknown')
+        # Get model architecture from inference config JSON
+        architecture = config.get('architecture', {})
+        signals_info = config.get('signals', {})
+        residual_data_key = config.get('data_config', {}).get('residual_data_key', 'unknown')
 
-        # Get boundary and target signals from training config
-        boundary_signals = training_config.get('boundary_signals', [])
-        target_signals = training_config.get('target_signals', [])
+        # Get boundary and target signals from inference config JSON
+        boundary_signals = signals_info.get('boundary_signals', [])
+        target_signals = signals_info.get('target_signals', [])
+
+        # Fallback: try to get from checkpoint if not in JSON
+        if not boundary_signals or not target_signals:
+            boundary_signals = checkpoint.get('boundary_signals', [])
+            target_signals = checkpoint.get('target_signals', [])
 
         if not boundary_signals or not target_signals:
-            return None, "❌ 配置文件中缺少 boundary_signals 或 target_signals！"
+            return None, "❌ 配置文件和checkpoint中都缺少 boundary_signals 或 target_signals！"
 
-        # Initialize model
+        # Get training config from checkpoint for storing
+        training_config = checkpoint.get('config', {})
+
+        # Initialize model using architecture from inference config
         stage2_model = StaticSensorTransformer(
             num_boundary_sensors=len(boundary_signals),
             num_target_sensors=len(target_signals),
-            d_model=model_config.get('d_model', 128),
-            nhead=model_config.get('nhead', 8),
-            num_layers=model_config.get('num_layers', 4),
-            dropout=model_config.get('dropout', 0.15)
+            d_model=architecture.get('d_model', 128),
+            nhead=architecture.get('nhead', 8),
+            num_layers=architecture.get('num_layers', 4),
+            dropout=architecture.get('dropout', 0.15)
         ).to(device)
 
         # Load state dict
@@ -3075,18 +3129,18 @@ def load_stage2_from_model_file(model_path):
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
         # Extract configurations
-        model_config = checkpoint.get('model_config', {})
-        training_config = checkpoint.get('training_config', {})
+        # Training saves 'config' not 'model_config' at top level
+        config = checkpoint.get('config', {})
         residual_data_key = checkpoint.get('residual_data_key', 'unknown')
 
-        # Get signals
-        boundary_signals = training_config.get('boundary_signals', [])
-        target_signals = training_config.get('target_signals', [])
+        # Get signals - these are saved at top level in checkpoint, not in config
+        boundary_signals = checkpoint.get('boundary_signals', [])
+        target_signals = checkpoint.get('target_signals', [])
 
         if not boundary_signals or not target_signals:
-            return None, "❌ 模型文件中缺少 boundary_signals 或 target_signals！"
+            return None, f"❌ 模型文件中缺少 boundary_signals 或 target_signals！\n\nCheckpoint keys: {list(checkpoint.keys())}"
 
-        # Load scalers from checkpoint or find corresponding scaler file
+        # Load scalers - try checkpoint first, then external file
         scalers = None
         if 'scalers' in checkpoint:
             scalers = checkpoint['scalers']
@@ -3100,14 +3154,14 @@ def load_stage2_from_model_file(model_path):
         if not scalers:
             return None, "❌ 未找到 scalers！请确保模型 checkpoint 中包含 scalers 或存在对应的 *_scalers.pkl 文件。"
 
-        # Initialize model
+        # Initialize model - use config from training
         stage2_model = StaticSensorTransformer(
             num_boundary_sensors=len(boundary_signals),
             num_target_sensors=len(target_signals),
-            d_model=model_config.get('d_model', 128),
-            nhead=model_config.get('nhead', 8),
-            num_layers=model_config.get('num_layers', 4),
-            dropout=model_config.get('dropout', 0.15)
+            d_model=config.get('d_model', 128),
+            nhead=config.get('nhead', 8),
+            num_layers=config.get('num_layers', 4),
+            dropout=config.get('dropout', 0.15)
         ).to(device)
 
         # Load state dict
@@ -3121,7 +3175,7 @@ def load_stage2_from_model_file(model_path):
         # Store in global state
         global_state['stage2_models'][model_key] = {
             'model': stage2_model,
-            'config': training_config,
+            'config': config,
             'boundary_signals': boundary_signals,
             'target_signals': target_signals,
             'residual_data_key': residual_data_key,
@@ -3524,7 +3578,7 @@ def create_unified_interface():
                         refresh_ensemble_btn = gr.Button("🔄 刷新", size="sm")
 
                         gr.Markdown("### 📤 加载Stage2模型（可选）")
-                        gr.Markdown("从saved_models/tft_models文件夹加载预训练的Stage2模型")
+                        gr.Markdown("从saved_models/stage2_boost文件夹加载预训练的Stage2模型")
 
                         stage2_inference_config_selector = gr.Dropdown(
                             choices=get_stage2_inference_config_files(),
@@ -3706,53 +3760,85 @@ def create_unified_interface():
                         status += f"{'RMSE':<15} {rmse_base:>15.6f} {rmse_ensemble:>15.6f} {improvement_rmse:>11.2f}%\n"
                         status += f"{'R²':<15} {r2_base:>15.4f} {r2_ensemble:>15.4f}\n"
 
-                        # 创建可视化
-                        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-                        fig.suptitle(f'二次推理比较 - {ensemble_name}', fontsize=16)
+                        # Create visualization - show all signals
+                        num_signals = y_true_seg.shape[1]
+                        n_signal_plots = min(6, num_signals)  # Show up to 6 signals in detail
 
-                        # 预测对比（第一个信号）
+                        # Create figure with more subplots for all signals
+                        fig = plt.figure(figsize=(20, 12))
+                        gs = fig.add_gridspec(3, 4, hspace=0.3, wspace=0.3)
+
+                        # Set font to avoid encoding issues
+                        plt.rcParams['font.family'] = 'DejaVu Sans'
+
+                        fig.suptitle(f'Reinference Comparison - {ensemble_name}', fontsize=16, fontweight='bold')
+
+                        # Plot 1: Error comparison across samples (top left, spans 2 columns)
+                        ax1 = fig.add_subplot(gs[0, :2])
                         plot_samples = min(500, len(y_true_seg))
-                        axes[0, 0].plot(y_true_seg[:plot_samples, 0], label='True', alpha=0.7)
-                        axes[0, 0].plot(y_pred_base_seg[:plot_samples, 0], label='SST', alpha=0.7)
-                        axes[0, 0].plot(y_pred_ensemble_seg[:plot_samples, 0], label='Ensemble', alpha=0.7)
-                        axes[0, 0].set_title('预测对比 (信号1)')
-                        axes[0, 0].legend()
-                        axes[0, 0].set_xlabel('Index')
-                        axes[0, 0].set_ylabel('Value')
-
-                        # 误差对比
                         error_base = np.abs(y_true_seg - y_pred_base_seg).mean(axis=1)
                         error_ensemble = np.abs(y_true_seg - y_pred_ensemble_seg).mean(axis=1)
 
-                        axes[0, 1].plot(error_base[:plot_samples], label='SST Error', alpha=0.7)
-                        axes[0, 1].plot(error_ensemble[:plot_samples], label='Ensemble Error', alpha=0.7)
-                        axes[0, 1].set_title('平均绝对误差对比')
-                        axes[0, 1].legend()
-                        axes[0, 1].set_xlabel('Index')
-                        axes[0, 1].set_ylabel('MAE')
+                        ax1.plot(error_base[:plot_samples], label='Base Model Error', alpha=0.7)
+                        ax1.plot(error_ensemble[:plot_samples], label='Ensemble Error', alpha=0.7)
+                        ax1.set_title('Mean Absolute Error Comparison', fontsize=12, fontweight='bold')
+                        ax1.legend()
+                        ax1.set_xlabel('Sample Index')
+                        ax1.set_ylabel('MAE')
+                        ax1.grid(alpha=0.3)
 
-                        # 误差分布
-                        axes[1, 0].hist(error_base, bins=50, alpha=0.5, label='SST', edgecolor='black')
-                        axes[1, 0].hist(error_ensemble, bins=50, alpha=0.5, label='Ensemble', edgecolor='black')
-                        axes[1, 0].set_title('误差分布')
-                        axes[1, 0].legend()
-                        axes[1, 0].set_xlabel('Error')
-                        axes[1, 0].set_ylabel('Frequency')
+                        # Plot 2: Error distribution (top right, spans 2 columns)
+                        ax2 = fig.add_subplot(gs[0, 2:])
+                        ax2.hist(error_base, bins=50, alpha=0.5, label='Base Model', edgecolor='black', color='skyblue')
+                        ax2.hist(error_ensemble, bins=50, alpha=0.5, label='Ensemble', edgecolor='black', color='orange')
+                        ax2.set_title('Error Distribution', fontsize=12, fontweight='bold')
+                        ax2.legend()
+                        ax2.set_xlabel('Error Magnitude')
+                        ax2.set_ylabel('Frequency')
+                        ax2.grid(alpha=0.3)
 
-                        # 性能指标柱状图
-                        metrics = ['MAE', 'RMSE', 'R²']
+                        # Plot 3: Performance metrics bar chart (middle left)
+                        ax3 = fig.add_subplot(gs[1, :2])
+                        metrics_labels = ['MAE', 'RMSE', 'R²']
                         base_values = [mae_base, rmse_base, r2_base]
                         ensemble_values = [mae_ensemble, rmse_ensemble, r2_ensemble]
 
-                        x = np.arange(len(metrics))
+                        x_pos = np.arange(len(metrics_labels))
                         width = 0.35
 
-                        axes[1, 1].bar(x - width / 2, base_values, width, label='SST', alpha=0.8)
-                        axes[1, 1].bar(x + width / 2, ensemble_values, width, label='Ensemble', alpha=0.8)
-                        axes[1, 1].set_title('性能指标对比')
-                        axes[1, 1].set_xticks(x)
-                        axes[1, 1].set_xticklabels(metrics)
-                        axes[1, 1].legend()
+                        ax3.bar(x_pos - width / 2, base_values, width, label='Base Model', alpha=0.8, color='skyblue')
+                        ax3.bar(x_pos + width / 2, ensemble_values, width, label='Ensemble', alpha=0.8, color='orange')
+                        ax3.set_title('Performance Metrics Comparison', fontsize=12, fontweight='bold')
+                        ax3.set_xticks(x_pos)
+                        ax3.set_xticklabels(metrics_labels)
+                        ax3.legend()
+                        ax3.grid(axis='y', alpha=0.3)
+
+                        # Plot 4: First signal prediction comparison (middle right)
+                        ax4 = fig.add_subplot(gs[1, 2:])
+                        ax4.plot(y_true_seg[:plot_samples, 0], label='Ground Truth', alpha=0.7, linewidth=1.5)
+                        ax4.plot(y_pred_base_seg[:plot_samples, 0], label='Base Model', alpha=0.7, linewidth=1.5)
+                        ax4.plot(y_pred_ensemble_seg[:plot_samples, 0], label='Ensemble', alpha=0.7, linewidth=1.5)
+                        ax4.set_title('Prediction Comparison (Signal 1)', fontsize=12, fontweight='bold')
+                        ax4.legend()
+                        ax4.set_xlabel('Sample Index')
+                        ax4.set_ylabel('Value')
+                        ax4.grid(alpha=0.3)
+
+                        # Plots 5-10: Individual signal predictions (bottom row, up to 4 more signals)
+                        for idx in range(1, min(5, num_signals)):
+                            col = (idx - 1)
+                            ax = fig.add_subplot(gs[2, col])
+
+                            ax.plot(y_true_seg[:plot_samples, idx], label='True', alpha=0.7, linewidth=1)
+                            ax.plot(y_pred_base_seg[:plot_samples, idx], label='Base', alpha=0.7, linewidth=1)
+                            ax.plot(y_pred_ensemble_seg[:plot_samples, idx], label='Ensemble', alpha=0.7, linewidth=1)
+
+                            ax.set_title(f'Signal {idx+1}', fontsize=10, fontweight='bold')
+                            ax.legend(fontsize=7)
+                            ax.set_xlabel('Sample', fontsize=8)
+                            ax.set_ylabel('Value', fontsize=8)
+                            ax.grid(alpha=0.3)
 
                         plt.tight_layout()
 
@@ -4083,6 +4169,12 @@ if __name__ == "__main__":
 
     print("启动工业数字孪生残差Boost训练系统...")
     print("="*80)
+
+    # Create necessary directories
+    os.makedirs("saved_models", exist_ok=True)
+    os.makedirs("saved_models/stage2_boost", exist_ok=True)
+    os.makedirs("saved_models/ensemble", exist_ok=True)
+    print("✅ 已创建必要的模型保存目录")
 
     # Check if running in Colab
     try:
