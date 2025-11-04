@@ -46,22 +46,25 @@ Traditional machine learning approaches treat sensors independently or use simpl
 - Configurable architecture and training parameters
 - Automatic model saving and versioning
 
-#### **Intelligent R² Threshold Selection** 🎯
-- Automatically calculate R² scores for each signal
-- Selectively apply Stage2 corrections based on R² threshold
+#### **Intelligent Delta R² Threshold Selection** 🎯
+- Calculate Delta R² (R²_ensemble - R²_stage1) for each signal
+- Selectively apply Stage2 corrections based on Delta R² threshold
 - Generate ensemble models combining SST + Stage2
 - Optimized performance/efficiency balance
+- Only use Stage2 for signals where it provides significant improvement
 
 #### **Comprehensive Inference Comparison** 📊
 - Compare ensemble model vs. pure SST model
-- Visualize performance improvements
-- Detailed metrics analysis (MAE, RMSE, R²)
+- Visualize performance improvements for all output signals
+- Detailed per-signal metrics analysis (MAE, RMSE, R²)
+- CSV export with predictions and R² scores
 - Interactive index range selection
 
-#### **Sundial Time-Series Prediction** 🔮
-- Predict future residual trends (framework in place)
-- Long-term forecasting capabilities
-- Index-based temporal modeling
+#### **All-Signal Visualization** 📈
+- Individual prediction vs actual comparison for every output signal
+- Dynamic layout adapting to number of signals
+- R² scores displayed for each signal
+- Easy identification of model improvements
 
 ### Additional Features
 
@@ -193,16 +196,14 @@ Step 1: Base SST Model
 Step 2: Stage2 Residual Model
    Boundary Sensors → [SST₂] → Residual Corrections
 
-Step 3: Intelligent R² Selection
-   For each target sensor:
-     if R² < threshold: Apply Stage2 correction
+Step 3: Intelligent Delta R² Selection
+   For each target signal:
+     Delta R² = R²_ensemble - R²_stage1
+     if Delta R² > threshold: Apply Stage2 correction
      else: Use base SST prediction
 
-Step 4: Final Ensemble
-   Enhanced predictions with 15-25% accuracy improvement
-
-Optional: Sundial Forecasting
-   Final residuals → [Sundial] → Future trend prediction
+Step 4: Final Ensemble Model
+   Predictions = Stage1 predictions + selective Stage2 corrections
 ```
 
 ## 🔧 Installation
@@ -294,7 +295,6 @@ The enhanced interface provides:
 - 🚀 **Stage2 Boost Training**: Train secondary models on residuals
 - 🎯 **Ensemble Model Generation**: Intelligent R² threshold-based model combination
 - 📊 **Inference Comparison**: Compare SST vs. ensemble model performance
-- 🔮 **Sundial Forecasting**: Predict future residual trends (in development)
 - 💾 **Export**: Automatic model saving with complete configurations
 
 **Quick Start Guide**: See `docs/QUICKSTART.md` for a 5-minute tutorial
@@ -378,12 +378,17 @@ residuals = true_values - base_model_predictions
 stage2_model = StaticSensorTransformer(...)
 # ... train stage2 on residuals ...
 
-# Step 4: Generate ensemble with intelligent R² selection
+# Step 4: Generate ensemble with intelligent Delta R² selection
 for signal_idx in range(num_signals):
-    r2 = calculate_r2(true_values[:, signal_idx], base_predictions[:, signal_idx])
-    if r2 < threshold:  # e.g., threshold=0.4
+    r2_base = calculate_r2(true_values[:, signal_idx], base_predictions[:, signal_idx])
+    r2_ensemble = calculate_r2(true_values[:, signal_idx], base_pred[:, signal_idx] + stage2_pred[:, signal_idx])
+    delta_r2 = r2_ensemble - r2_base
+
+    if delta_r2 > threshold:  # e.g., threshold=0.05 (5% improvement)
+        # Use Stage2 correction (significant improvement)
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx] + stage2_pred[:, signal_idx]
     else:
+        # Keep base prediction (no significant improvement)
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx]
 ```
 
@@ -464,7 +469,6 @@ If you use this work in your research, please cite:
 - [x] Enhanced Gradio interface
 
 ### v2.0 (Upcoming)
-- [ ] Complete Sundial time-series forecasting
 - [ ] Advanced residual analysis tools
 - [ ] Multi-stage boost (Stage3+)
 - [ ] Attention visualization
