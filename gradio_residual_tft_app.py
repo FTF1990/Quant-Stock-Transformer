@@ -1548,9 +1548,9 @@ def compute_signal_r2_and_select_threshold(
         stage2_target = stage2_model_info.get('target_signals', target_signals)
 
         if set(stage2_boundary) != set(boundary_signals):
-            log_msg.append(f"\n⚠️  警告：Stage2 model的边界信号与Residual data不完全匹配")
+            log_msg.append(f"\n⚠️  Warning：Stage2 model's boundary signals were not matched with Residual data")
         if set(stage2_target) != set(target_signals):
-            log_msg.append(f"\n⚠️  警告：Stage2 model的目标信号与Residual data不完全匹配")
+            log_msg.append(f"\n⚠️  Warning：Stage2 model's target signals were not matched with Residual data")
 
         log_msg.append(f"\n📊 Model information:")
         log_msg.append(f"  Base model: {base_model_name}")
@@ -1581,7 +1581,7 @@ def compute_signal_r2_and_select_threshold(
         y_pred_stage1_test = residuals_df[y_pred_cols].iloc[test_start_idx:].values
         X_test = residuals_df[boundary_signals].iloc[test_start_idx:].values
 
-        # 使用Stage2 model预测Test set残差
+        # Use Stage2 model to generate residual values fo test set
         y_residual_pred_test = batch_inference(
             stage2_model,
             X_test,
@@ -1754,7 +1754,7 @@ def compute_signal_r2_and_select_threshold(
                 'Ensemble_R2': item['r2_ensemble'],
                 'Delta_R2': item['delta_r2'],
                 'R2 Improvement (%)': item['delta_r2'] * 100,
-                'Selection模型': 'Stage1+Stage2' if item['use_stage2'] else 'Stage1',
+                'Selection_model': 'Stage1+Stage2' if item['use_stage2'] else 'Stage1',
                 'Use Stage2': 'Yes' if item['use_stage2'] else 'No'
             })
 
@@ -1919,7 +1919,7 @@ def check_preloaded_data():
 
         return status, preview_df, signals_display
     else:
-        return "⚠️ 尚未Load Data，请SelectionCSV文件、上传文件Or Create Sample Data", None, ""
+        return "⚠️ Data was not loaded", None, ""
 
 
 def load_signals_config_from_json(json_file):
@@ -1942,10 +1942,10 @@ def load_signals_config_from_json(json_file):
             file_path = json_file
 
         if not file_path:
-            return [], [], "❌ 请Upload JSON Config File"
+            return [], [], "❌ Please Upload JSON Config File"
 
         if not os.path.exists(file_path):
-            return [], [], f"❌ 文件does not exist: {file_path}"
+            return [], [], f"❌ File does not exist: {file_path}"
 
         # Load JSON
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -2493,10 +2493,10 @@ def load_model_from_inference_config_path(config_path):
     """
     try:
         if not config_path:
-            return None, "❌ 请SelectionInference config文件"
+            return None, "❌ Please select Inference config file"
 
         if not os.path.exists(config_path):
-            return None, f"❌ 文件does not exist: {config_path}"
+            return None, f"❌ file does not exist: {config_path}"
 
         # Load config
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -3141,7 +3141,7 @@ def load_stage2_from_inference_config(config_path):
         status_msg += f"Number of boundary signals: {len(boundary_signals)}\n"
         status_msg += f"Number of target signals: {len(target_signals)}\n"
         status_msg += f"Residual data key: {residual_data_key}\n\n"
-        status_msg += f"请在下方的 'Stage2 model' 下拉框中Selection: {model_key}"
+        status_msg += f"Please select 'Stage2 model' : {model_key}"
 
         return model_key, status_msg
 
@@ -3161,7 +3161,7 @@ def load_stage2_from_model_file(model_path):
     """
     try:
         if not model_path or not os.path.exists(model_path):
-            return None, "❌ 请Selection有效的模型文件！"
+            return None, "❌ Please select model file！"
 
         checkpoint = torch.load(model_path, map_location=device, weights_only=False)
 
@@ -3227,7 +3227,7 @@ def load_stage2_from_model_file(model_path):
         status_msg += f"Number of boundary signals: {len(boundary_signals)}\n"
         status_msg += f"Number of target signals: {len(target_signals)}\n"
         status_msg += f"Residual data key: {residual_data_key}\n\n"
-        status_msg += f"请在下方的 'Stage2 model' 下拉框中Selection: {model_key}"
+        status_msg += f"Please select 'Stage2 model: {model_key}"
 
         return model_key, status_msg
 
@@ -3531,7 +3531,7 @@ def create_unified_interface():
                             interactive=False
                         )
 
-                # Stage2Training函数
+                # Stage2Training
                 def train_stage2_ui_generator(residual_data_key, d_model, nhead, num_layers, dropout,
                                              epochs, batch_size, lr, weight_decay, grad_clip,
                                              scheduler_patience, scheduler_factor,
@@ -3590,7 +3590,7 @@ def create_unified_interface():
                     outputs=[stage2_training_log]
                 )
 
-            # Tab 5: Ensemble Inference Model生成
+            # Tab 5: Ensemble Inference Model Generation
             with gr.Tab("🎯 Ensemble Inference Model", elem_id="ensemble_model"):
                 gr.Markdown("## Generate Ensemble Inference Model (Delta R² Strategy)")
                 gr.Markdown("""
@@ -3652,10 +3652,10 @@ def create_unified_interface():
                         delta_r2_threshold_slider = gr.Slider(
                             0.0, 0.5, 0.05, 0.01,
                             label="Delta R² Threshold",
-                            info="Only forDelta R² > 阈值的信号应用Stage2修正（0.05 = 5%提升）"
+                            info="Only for signals with Delta R² > Threshold will be selected in Ensemble model（0.05 = 5% R2 boost）"
                         )
 
-                        generate_ensemble_btn = gr.Button("🎯 生成Ensemble model", variant="primary", size="lg")
+                        generate_ensemble_btn = gr.Button("🎯 Generate Ensemble model", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
                         ensemble_status = gr.Textbox(
@@ -3665,7 +3665,7 @@ def create_unified_interface():
                             interactive=False
                         )
 
-                # 添加Visualization输出
+                # Add Visualization
                 with gr.Row():
                     ensemble_visualization = gr.Plot(
                         label="Ensemble model分析Visualization",
@@ -3674,7 +3674,7 @@ def create_unified_interface():
 
                 def generate_ensemble_ui(base_model_name, stage2_model_name, delta_r2_threshold):
                     if not base_model_name or not stage2_model_name:
-                        return "❌ 请SelectionBase model和Stage2 model！", None
+                        return "❌ Please select Base model and Stage2 model！", None
 
                     status_msg, ensemble_info, fig = compute_signal_r2_and_select_threshold(
                         base_model_name, stage2_model_name, delta_r2_threshold
@@ -3746,7 +3746,7 @@ def create_unified_interface():
             # Tab 6: Reinference Comparison
             with gr.Tab("📊 Reinference Comparison", elem_id="reinference_comparison"):
                 gr.Markdown("## Reinference Comparison")
-                gr.Markdown("Selectionindexrange，比较Ensemble model与纯SST模型的性能提升")
+                gr.Markdown("Selectionindexrange，Comparing the performance of Ensemble model and stage1 SST model")
 
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -3759,10 +3759,10 @@ def create_unified_interface():
 
                         gr.Markdown("### 📏 IndexrangeSelection")
                         with gr.Row():
-                            reinf_start_idx = gr.Number(value=0, label="起始Index", precision=0)
-                            reinf_end_idx = gr.Number(value=1000, label="结束Index", precision=0)
+                            reinf_start_idx = gr.Number(value=0, label="StartIndex", precision=0)
+                            reinf_end_idx = gr.Number(value=1000, label="EndIndex", precision=0)
 
-                        compare_reinf_btn = gr.Button("📊 执行比较", variant="primary", size="lg")
+                        compare_reinf_btn = gr.Button("📊 Run inferencing", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
                         reinf_status = gr.Textbox(
@@ -3779,7 +3779,7 @@ def create_unified_interface():
                     and export CSV with predictions, actual values, and R² scores
                     """
                     if not ensemble_name:
-                        return "❌ 请SelectionEnsemble model！", None
+                        return "❌ please select ensemble model！", None
 
                     if ensemble_name not in global_state['ensemble_models']:
                         return "❌ Ensemble modeldoes not exist！", None
@@ -3834,13 +3834,13 @@ def create_unified_interface():
                         improvement_mae = (mae_base - mae_ensemble) / mae_base * 100 if mae_base != 0 else 0
                         improvement_rmse = (rmse_base - rmse_ensemble) / rmse_base * 100 if rmse_base != 0 else 0
 
-                        status = f"📊 二次推理Comparison results\n"
+                        status = f"📊 Second inferecing results comparison\n"
                         status += f"=" * 60 + "\n\n"
                         status += f"📏 Indexrange: [{start_idx}, {end_idx})\n"
                         status += f"📈 Number of samples: {len(y_true_seg):,}\n"
                         status += f"🎯 Number of output signals: {num_signals}\n\n"
 
-                        status += f"整体Performance comparison:\n"
+                        status += f"total Performance comparison:\n"
                         status += f"{'metrics':<15} {'Stage1':>15} {'Ensemble':>15} {'improvement':>12}\n"
                         status += "-" * 60 + "\n"
                         status += f"{'MAE':<15} {mae_base:>15.6f} {mae_ensemble:>15.6f} {improvement_mae:>11.2f}%\n"
@@ -3874,12 +3874,12 @@ def create_unified_interface():
                         df_r2_summary = pd.DataFrame(r2_summary_data)
                         df_r2_summary.to_csv(r2_summary_filename, index=False)
 
-                        status += f"✅ CSV结果saved:\n"
+                        status += f"✅ CSV saved:\n"
                         status += f"   📁 Prediction data: {csv_filename}\n"
                         status += f"   📁 R²summary: {r2_summary_filename}\n\n"
 
-                        status += f"Each signalR²对比:\n"
-                        status += f"{'信号':<20} {'Stage1 R²':>12} {'Ensemble R²':>12} {'Delta R²':>12}\n"
+                        status += f"results of each signalR²:\n"
+                        status += f"{'signals':<20} {'Stage1 R²':>12} {'Ensemble R²':>12} {'Delta R²':>12}\n"
                         status += "-" * 60 + "\n"
                         for i, signal_name in enumerate(signal_names):
                             delta_r2 = r2_ensemble_per_signal[i] - r2_base_per_signal[i]
@@ -3964,7 +3964,7 @@ def create_unified_interface():
                         return status, fig
 
                     except Exception as e:
-                        error_msg = f"❌ 比较失败:\n{str(e)}\n\n{traceback.format_exc()}"
+                        error_msg = f"❌ inferecing failed:\n{str(e)}\n\n{traceback.format_exc()}"
                         return error_msg, None
 
                 refresh_reinf_btn.click(
@@ -3981,21 +3981,21 @@ def create_unified_interface():
         # Footer info
         gr.Markdown("""
         ---
-        ## 📖 使用流程
+        ## 📖 Usage Flow
 
-        ### 完整流程
-        1️⃣ **Data Loading** → 上传CSV或Create sample data
-        2️⃣ **SST Model Training** → Training静态传感器映射Transformer
-        3️⃣ **Residual Extraction** → 从SST模型提取预测残差
-        4️⃣ **Stage2Training** → TrainingStage2 residual model
-        5️⃣ **生成Ensemble model** → 智能R²阈值Selection，生成Ensemble Inference Model
-        6️⃣ **Reinference Comparison** → 对比Ensemble model与SST模型的性能提升
+        ### Complete Process
+        1️⃣ **Data Loading** → Upload CSV or Create sample data
+        2️⃣ **SST Model Training** → Training Static Sensor Mapping Transformer
+        3️⃣ **Residual Extraction** → Extract prediction residuals from the SST model
+        4️⃣ **Stage2 Training** → Training Stage2 residual model
+        5️⃣ **Generate Ensemble model** → Intelligent $R^2$ Threshold Selection, generate Ensemble Inference Model
+        6️⃣ **Reinference Comparison** → Compare the performance improvement of the Ensemble model versus the SST model
 
-        **🎯 创新点**:
-        - ✨ Stage2 Boost架构：针对性improvement低R²信号
-        - 🎯 智能阈值Selection：自动决定哪些信号需要Stage2
-        - 📊 Ensemble Inference Model：最优组合SST和Stage2
-        - 📈 全信号Visualization：每个输出信号独立对比分析
+        **🎯 Innovation Points**:
+        - ✨ Stage2 Boost Architecture: Targeted improvement for low $R^2$ signals
+        - 🎯 Intelligent Threshold Selection: Automatically decide which signals require Stage2
+        - 📊 Ensemble Inference Model: Optimal combination of SST and Stage2
+        - 📈 Full Signal Visualization: Independent comparative analysis for every output signal
         """)
 
         # Auto refresh dropdowns on page load
@@ -4130,14 +4130,14 @@ def create_unified_interface():
         def load_json_from_selector(json_path):
             """Load JSON config from dropdown selector"""
             if not json_path:
-                return gr.update(), gr.update(), "⚠️ 请SelectionJSONConfig file"
+                return gr.update(), gr.update(), "⚠️ please select json config file"
             boundary, target, status = load_signals_config_from_json(json_path)
             return gr.update(value=boundary), gr.update(value=target), status
 
         def load_json_from_upload(json_file):
             """Load JSON config from uploaded file"""
             if not json_file:
-                return gr.update(), gr.update(), "⚠️ 请Upload JSON Config File"
+                return gr.update(), gr.update(), "⚠️ please upload json config file"
             boundary, target, status = load_signals_config_from_json(json_file)
             return gr.update(value=boundary), gr.update(value=target), status
 
@@ -4179,7 +4179,7 @@ def create_unified_interface():
         # Stop按钮绑定 - Tab2
         def stop_training_tab2():
             global_state['stop_training_tab2'] = True
-            return "⚠️  已发送停止信号，训练将在当前 epoch 结束后停止..."
+            return "⚠️  Stop after this epoch..."
 
         stop_btn_tab2.click(
             fn=stop_training_tab2,
@@ -4189,7 +4189,7 @@ def create_unified_interface():
         # Stop按钮绑定 - Tab4
         def stop_training_tab4():
             global_state['stop_training_tab4'] = True
-            return "⚠️  已发送停止信号，训练将在当前 epoch 结束后停止..."
+            return "⚠️  Stop after this epoch..."
 
         stop_btn_tab4.click(
             fn=stop_training_tab4,
@@ -4220,19 +4220,19 @@ if __name__ == "__main__":
     try:
         import google.colab
         IN_COLAB = True
-        print("✅ 检测到Colab环境")
+        print("✅ colab confirmed")
     except:
         IN_COLAB = False
-        print("✅ 本地环境")
+        print("✅ local confirmed")
 
     demo = create_unified_interface()
-    print("✅ 界面创建完成")
+    print("✅ UI built")
     print("="*80)
 
     if IN_COLAB:
         # Colab environment - use share=True for public URL
-        print("\n🌐 在Colab中启动Gradio...")
-        print("📝 提示：Gradio将生成一个公网链接")
+        print("\n🌐 Start gradio in colab...")
+        print("📝 note：Gradio will generate a public link")
         demo.launch(
             share=True,
             debug=True,
@@ -4241,10 +4241,10 @@ if __name__ == "__main__":
         )
     else:
         # Local environment - try multiple ports
-        print("\n🌐 在本地环境中启动Gradio...")
+        print("\n🌐 Run gradio locally...")
         for port in range(7860, 7870):
             try:
-                print(f"尝试端口 {port}...")
+                print(f"try {port}...")
                 demo.launch(
                     server_name="127.0.0.1",
                     server_port=port,
@@ -4253,12 +4253,12 @@ if __name__ == "__main__":
                     show_error=True,
                     quiet=False
                 )
-                print(f"✅ 服务器启动成功！")
-                print(f"🔗 访问地址: http://localhost:{port}")
+                print(f"✅ Service Started！")
+                print(f"🔗 Address: http://localhost:{port}")
                 print("="*80)
                 break
             except OSError:
-                print(f"⚠️  端口 {port} 被占用，尝试下一个...")
+                print(f"⚠️  port {port} was not available，try next...")
                 continue
         else:
-            print("❌ 无法找到可用端口 (7860-7869)")
+            print("❌ no available port (7860-7869)")
