@@ -46,22 +46,25 @@
 - 可配置的架构和训练参数
 - 自动模型保存和版本控制
 
-#### **智能 R² 阈值选择** 🎯
-- 自动计算每个信号的 R² 分数
-- 基于 R² 阈值选择性地应用 Stage2 修正
+#### **智能 Delta R² 阈值选择** 🎯
+- 计算每个信号的 Delta R² (R²_ensemble - R²_stage1)
+- 基于 Delta R² 阈值选择性地应用 Stage2 修正
 - 生成结合 SST + Stage2 的集成模型
 - 优化的性能/效率平衡
+- 仅对有显著改进的信号使用 Stage2
 
 #### **全面的推理对比** 📊
 - 比较集成模型与纯 SST 模型
-- 可视化性能改进
-- 详细的指标分析（MAE、RMSE、R²）
+- 可视化所有输出信号的性能改进
+- 详细的逐信号指标分析（MAE、RMSE、R²）
+- CSV 导出包含预测值和 R² 分数
 - 交互式索引范围选择
 
-#### **Sundial 时间序列预测** 🔮
-- 预测未来残差趋势（框架已建立）
-- 长期预测能力
-- 基于索引的时间建模
+#### **全信号可视化** 📈
+- 每个输出信号的独立预测 vs 实际值对比
+- 动态布局适应信号数量
+- 每个信号显示 R² 分数
+- 轻松识别模型改进
 
 ### 附加功能
 
@@ -193,16 +196,15 @@
 步骤 2: Stage2 残差模型
    边界传感器 → [SST₂] → 残差修正
 
-步骤 3: 智能 R² 选择
-   对于每个目标传感器:
-     if R² < 阈值: 应用 Stage2 修正
+步骤 3: 智能 Delta R² 选择
+   对于每个目标信号:
+     Delta R² = R²_ensemble - R²_stage1
+     if Delta R² > 阈值: 应用 Stage2 修正
      else: 使用基础 SST 预测
 
-步骤 4: 最终集成
-   增强预测，准确性提高 15-25%
+步骤 4: 最终集成模型
+   预测 = Stage1 预测 + 选择性 Stage2 修正
 
-可选: Sundial 预测
-   最终残差 → [Sundial] → 未来趋势预测
 ```
 
 ## 🔧 安装
@@ -292,9 +294,8 @@ python gradio_residual_tft_app.py
 - 🎯 **SST 模型训练**：配置和训练基础 SST 模型
 - 🔬 **残差提取**：从训练的模型中提取和分析残差
 - 🚀 **Stage2 提升训练**：在残差上训练第二阶段模型
-- 🎯 **集成模型生成**：基于智能 R² 阈值的模型组合
+- 🎯 **集成模型生成**：基于智能 Delta R² 阈值的模型组合
 - 📊 **推理对比**：比较 SST vs. 集成模型性能
-- 🔮 **Sundial 预测**：预测未来残差趋势（开发中）
 - 💾 **导出**：自动模型保存（含完整配置）
 
 **快速入门指南**：参见 `docs/QUICKSTART.md` 获取 5 分钟教程
@@ -378,12 +379,17 @@ residuals = true_values - base_model_predictions
 stage2_model = StaticSensorTransformer(...)
 # ... 在残差上训练 stage2 ...
 
-# 步骤 4: 使用智能 R² 选择生成集成
+# 步骤 4: 使用智能 Delta R² 选择生成集成
 for signal_idx in range(num_signals):
-    r2 = calculate_r2(true_values[:, signal_idx], base_predictions[:, signal_idx])
-    if r2 < threshold:  # 例如, threshold=0.4
+    r2_base = calculate_r2(true_values[:, signal_idx], base_predictions[:, signal_idx])
+    r2_ensemble = calculate_r2(true_values[:, signal_idx], base_pred[:, signal_idx] + stage2_pred[:, signal_idx])
+    delta_r2 = r2_ensemble - r2_base
+
+    if delta_r2 > threshold:  # 例如, threshold=0.05 (5% 改进)
+        # 使用 Stage2 修正（显著改进）
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx] + stage2_pred[:, signal_idx]
     else:
+        # 保持基础预测（无显著改进）
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx]
 ```
 
@@ -464,7 +470,6 @@ python -m pytest tests/
 - [x] 增强型 Gradio 界面
 
 ### v2.0（即将推出）
-- [ ] 完整的 Sundial 时间序列预测
 - [ ] 高级残差分析工具
 - [ ] 多阶段提升（Stage3+）
 - [ ] 注意力可视化
