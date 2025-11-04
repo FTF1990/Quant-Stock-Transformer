@@ -251,9 +251,16 @@ timestamp,sensor_1,sensor_2,sensor_3,...,sensor_n
 ...
 ```
 
-### 2. Train Using Jupyter Notebook
+### 2. Train Stage1 Model Using Jupyter Notebook (Basic Training)
 
-Open `notebooks/train_and_inference.ipynb` and follow the step-by-step tutorial:
+This section demonstrates **basic Stage1 (SST) model training** for learning sensor prediction fundamentals.
+
+**Note**: The notebook provides a foundation for understanding the SST architecture and basic training process. For the complete Stage2 Boost training and ensemble model generation, please use the enhanced Gradio interface (Section 3).
+
+**Available Notebooks**:
+- `notebooks/transformer_boost_Leap_final.ipynb` - Advanced example with complete Stage1 + Stage2 training on LEAP dataset
+
+**Basic Training Example** (for your own data):
 
 ```python
 from models.static_transformer import StaticSensorTransformer
@@ -270,7 +277,7 @@ target_signals = ['sensor_4', 'sensor_5']  # Outputs to predict
 # Prepare data
 data_splits = data_loader.prepare_data(boundary_signals, target_signals)
 
-# Create and train model
+# Create and train Stage1 SST model
 model = StaticSensorTransformer(
     num_boundary_sensors=len(boundary_signals),
     num_target_sensors=len(target_signals)
@@ -278,24 +285,41 @@ model = StaticSensorTransformer(
 
 trainer = ModelTrainer(model, device='cuda')
 history = trainer.train(train_loader, val_loader)
+
+# Save trained model
+torch.save(model.state_dict(), 'saved_models/my_sst_model.pth')
 ```
 
-### 3. Use Enhanced Gradio Interface (Interactive)
+**What you'll learn in Stage1**:
+- Loading and preprocessing sensor data
+- Configuring boundary and target sensors
+- Training the Static Sensor Transformer (SST)
+- Basic model evaluation and prediction
 
-Launch the enhanced interactive web interface with full residual boost training:
+**For complete functionality** (Stage2 Boost + Ensemble Models), proceed to Section 3.
+
+### 3. Use Enhanced Gradio Interface (Complete Stage1 + Stage2 Training)
+
+Launch the enhanced interactive web interface with **full Stage1 + Stage2 residual boost training**:
 
 ```bash
 python gradio_residual_tft_app.py
 ```
 
-The enhanced interface provides:
+The enhanced interface provides the **complete end-to-end workflow**:
 - 📊 **Data Loading**: Upload CSV or create example data
-- 🎯 **SST Model Training**: Configure and train base SST models
-- 🔬 **Residual Extraction**: Extract and analyze residuals from trained models
-- 🚀 **Stage2 Boost Training**: Train secondary models on residuals
-- 🎯 **Ensemble Model Generation**: Intelligent R² threshold-based model combination
-- 📊 **Inference Comparison**: Compare SST vs. ensemble model performance
+- 🎯 **Stage1 SST Training**: Configure and train base Static Sensor Transformer models
+- 🔬 **Residual Extraction**: Extract and analyze prediction errors from Stage1 models
+- 🚀 **Stage2 Boost Training**: Train secondary models on residuals for error correction
+- 🎯 **Ensemble Model Generation**: Intelligent Delta R² threshold-based model combination
+- 📊 **Inference Comparison**: Compare Stage1 SST vs. ensemble model performance with visualizations
 - 💾 **Export**: Automatic model saving with complete configurations
+
+**This is the recommended way to experience the full capabilities of the framework**, including:
+- Automated multi-stage training pipeline
+- Intelligent signal-wise Stage2 selection
+- Comprehensive performance metrics and visualizations
+- Production-ready ensemble model generation
 
 **Quick Start Guide**: See `docs/QUICKSTART.md` for a 5-minute tutorial
 
@@ -326,7 +350,7 @@ Industrial-digital-twin-by-transformer/
 │   ├── QUICKSTART.md          # 5-minute quick start
 │   └── FILE_MANIFEST.md       # File structure guide
 ├── notebooks/                  # Jupyter notebooks
-│   └── train_and_inference.ipynb  # Main tutorial
+│   └── transformer_boost_Leap_final.ipynb  # Advanced Stage1+Stage2 tutorial with LEAP dataset
 ├── data/                      # Data folder
 │   ├── raw/                   # Place your CSV files here
 │   └── residuals_*.csv       # Extracted residuals
