@@ -337,26 +337,54 @@ torch.save(model.state_dict(), 'saved_models/my_sst_model.pth')
 
 ### 3. 使用增强型 Gradio 界面（完整 Stage1 + Stage2 训练）
 
-启动增强型交互式 Web 界面，提供**完整的 Stage1 + Stage2 残差提升训练**：
+#### **Jupyter Notebook 入门教程**
+
+有关分步指南，请参阅：
+- `notebooks/Train and run model with demo data and your own data with gradio interface.ipynb`
+
+该 notebook 演示了：
+- 从 Kaggle 下载演示数据（power-gen-machine 数据集）
+- 设置 Gradio 界面
+- 使用演示数据或您自己的自定义数据进行训练
+
+#### **使用演示数据快速开始**
+
+我们在 `data/raw/` 目录中提供了**预配置默认输入/输出信号配置**的演示传感器数据：
 
 ```bash
-python gradio_residual_tft_app.py
+python gradio_sensor_transformer_app.py
 ```
 
+**使用演示数据**：
+1. 启动 Gradio 界面
+2. **Tab 1: 加载数据**
+   - 点击刷新按钮更新文件列表
+   - 从下拉列表中选择并加载 `data.csv`
+3. **Tab 2: 配置与训练**
+   - 点击刷新按钮更新配置文件列表
+   - 选择并加载默认的输入/输出信号配置文件
+   - 选择训练参数（建议先尝试默认参数）
+   - 开始 Stage1 SST 模型训练
+
+#### **完整工作流程**
+
 增强型界面提供**完整的端到端工作流程**：
-- 📊 **数据加载**：上传 CSV 或创建示例数据
-- 🎯 **Stage1 SST 训练**：配置和训练基础静态传感器 Transformer 模型
-- 🔬 **残差提取**：从 Stage1 模型中提取和分析预测误差
-- 🚀 **Stage2 提升训练**：在残差上训练第二阶段模型进行误差修正
-- 🎯 **集成模型生成**：基于智能 Delta R² 阈值的模型组合
-- 📊 **推理对比**：比较 Stage1 SST vs. 集成模型性能并可视化
-- 💾 **导出**：自动模型保存（含完整配置）
+- 📊 **Tab 1: 数据加载** - 刷新并选择演示数据（`data.csv`）或上传您自己的 CSV
+- 🎯 **Tab 2: 信号配置与 Stage1 训练** - 刷新，加载信号配置，选择参数，训练基础 SST 模型
+- 🔬 **Tab 3: 残差提取** - 从 Stage1 模型中提取和分析预测误差
+- 🚀 **Tab 4: Stage2 提升训练** - 在残差上训练第二阶段模型进行误差修正
+- 🎯 **Tab 5: 集成模型生成** - 基于智能 Delta R² 阈值的模型组合
+- 📊 **Tab 6: 推理对比** - 比较 Stage1 SST vs. 集成模型性能并可视化
+- 💾 **Tab 7: 导出** - 自动模型保存（含完整配置）
 
 **这是体验框架完整功能的推荐方式**，包括：
-- 自动化多阶段训练流程
+- 使用演示数据的自动化多阶段训练流程
 - 智能的逐信号 Stage2 选择
 - 全面的性能指标和可视化
 - 生产就绪的集成模型生成
+
+**使用您自己的数据**：
+只需将您的 CSV 文件放在 `data/` 文件夹中，在 Tab 1 中刷新并选择您的文件。确保您的 CSV 遵循与演示数据相同的格式（时间步作为行，传感器作为列）。然后在 Tab 2 中配置您自己的输入/输出信号。
 
 **快速入门指南**：参见 `docs/QUICKSTART.md` 获取 5 分钟教程
 
@@ -398,7 +426,7 @@ Industrial-digital-twin-by-transformer/
 │   ├── gradio_app.py         # 旧的简单界面
 │   ├── gradio_full_interface.py  # 旧的完整界面
 │   └── hybrid_transformer.py  # 已弃用的 HST 模型
-├── gradio_residual_tft_app.py # 🆕 增强型 Gradio 应用
+├── gradio_sensor_transformer_app.py # 🆕 增强型 Gradio 应用
 ├── requirements.txt          # Python 依赖
 ├── setup.py                  # 包设置
 ├── LICENSE                   # MIT 许可证
@@ -453,7 +481,7 @@ for signal_idx in range(num_signals):
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx]
 ```
 
-**注意**：增强型 Gradio 界面（`gradio_residual_tft_app.py`）自动化了整个工作流程。
+**注意**：增强型 Gradio 界面（`gradio_sensor_transformer_app.py`）自动化了整个工作流程。
 
 ## 🎯 性能
 
