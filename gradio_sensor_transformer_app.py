@@ -3494,10 +3494,10 @@ def create_unified_interface():
 
                         gr.Markdown("### 🏗️ Model Architecture")
                         with gr.Row():
-                            d_model_stage2 = gr.Slider(32, 640, 128, 32, label="Model Dimension")
-                            nhead_stage2 = gr.Slider(2, 40, 8, 2, label="Number of Attention Heads")
+                            d_model_stage2 = gr.Slider(32, 640, 256, 32, label="Model Dimension")
+                            nhead_stage2 = gr.Slider(2, 40, 16, 2, label="Number of Attention Heads")
                         with gr.Row():
-                            num_layers_stage2 = gr.Slider(1, 20, 4, 1, label="Number of Transformer Layers")
+                            num_layers_stage2 = gr.Slider(1, 20, 6, 1, label="Number of Transformer Layers")
                             dropout_stage2 = gr.Slider(0, 0.5, 0.15, 0.05, label="Dropout Rate")
 
                         gr.Markdown("### 🎯 Training Parameters")
@@ -3505,13 +3505,13 @@ def create_unified_interface():
                             epochs_stage2 = gr.Slider(10, 400, 80, 10, label="Training Epochs")
                             batch_size_stage2 = gr.Slider(16, 2560, 512, 16, label="Batch size")
                         with gr.Row():
-                            lr_stage2 = gr.Number(value=0.0001, label="Learning rate")
+                            lr_stage2 = gr.Number(value=0.000001, label="Learning rate")
                             weight_decay_stage2 = gr.Number(value=5e-6, label="Weight Decay")
 
                         gr.Markdown("### ⚙️ Optimizer Settings")
                         with gr.Row():
                             grad_clip_stage2 = gr.Slider(0.1, 2.5, 0.5, 0.1, label="Gradient Clipping")
-                            scheduler_patience_stage2 = gr.Slider(1, 75, 15, 1, label="Learning Rate Scheduler Patience")
+                            scheduler_patience_stage2 = gr.Slider(1, 75, 10, 1, label="Learning Rate Scheduler Patience")
                         scheduler_factor_stage2 = gr.Slider(0.1, 0.9, 0.7, 0.1, label="Learning Rate Decay Factor")
 
                         gr.Markdown("### 🔀 Data split")

@@ -336,26 +336,54 @@ torch.save(model.state_dict(), 'saved_models/my_sst_model.pth')
 
 ### 3. Use Enhanced Gradio Interface (Complete Stage1 + Stage2 Training)
 
-Launch the enhanced interactive web interface with **full Stage1 + Stage2 residual boost training**:
+#### **Getting Started with Jupyter Notebook Tutorial**
+
+For a step-by-step guide, see:
+- `notebooks/Train and run model with demo data and your own data with gradio interface.ipynb`
+
+This notebook demonstrates:
+- Downloading demo data from Kaggle (power-gen-machine dataset)
+- Setting up the Gradio interface
+- Training with demo data or your own custom data
+
+#### **Quick Start with Demo Data**
+
+We provide demo sensor data in `data/raw/` directory with **pre-configured default input/output signal configurations**:
 
 ```bash
-python gradio_residual_tft_app.py
+python gradio_sensor_transformer_app.py
 ```
 
+**Using the Demo Data**:
+1. Launch the Gradio interface
+2. **Tab 1: Load Data**
+   - Click refresh button to update file list
+   - Select and load `data.csv` from the dropdown
+3. **Tab 2: Configure & Train**
+   - Click refresh button to update configuration file list
+   - Select and load the default input/output signal configuration file
+   - Select training parameters (we recommend trying default parameters first)
+   - Start Stage1 SST model training
+
+#### **Complete Workflow**
+
 The enhanced interface provides the **complete end-to-end workflow**:
-- 📊 **Data Loading**: Upload CSV or create example data
-- 🎯 **Stage1 SST Training**: Configure and train base Static Sensor Transformer models
-- 🔬 **Residual Extraction**: Extract and analyze prediction errors from Stage1 models
-- 🚀 **Stage2 Boost Training**: Train secondary models on residuals for error correction
-- 🎯 **Ensemble Model Generation**: Intelligent Delta R² threshold-based model combination
-- 📊 **Inference Comparison**: Compare Stage1 SST vs. ensemble model performance with visualizations
-- 💾 **Export**: Automatic model saving with complete configurations
+- 📊 **Tab 1: Data Loading** - Refresh and select demo data (`data.csv`) or upload your own CSV
+- 🎯 **Tab 2: Signal Configuration & Stage1 Training** - Refresh, load signal configuration, select parameters, and train base SST models
+- 🔬 **Tab 3: Residual Extraction** - Extract and analyze prediction errors from Stage1 models
+- 🚀 **Tab 4: Stage2 Boost Training** - Train secondary models on residuals for error correction
+- 🎯 **Tab 5: Ensemble Model Generation** - Intelligent Delta R² threshold-based model combination
+- 📊 **Tab 6: Inference Comparison** - Compare Stage1 SST vs. ensemble model performance with visualizations
+- 💾 **Tab 7: Export** - Automatic model saving with complete configurations
 
 **This is the recommended way to experience the full capabilities of the framework**, including:
-- Automated multi-stage training pipeline
+- Automated multi-stage training pipeline using demo data
 - Intelligent signal-wise Stage2 selection
 - Comprehensive performance metrics and visualizations
 - Production-ready ensemble model generation
+
+**Using Your Own Data**:
+Simply place your CSV file in the `data/` folder, refresh in Tab 1, and select your file. Ensure your CSV follows the same format as the demo data (timesteps as rows, sensors as columns). Then configure your own input/output signals in Tab 2.
 
 **Quick Start Guide**: See `docs/QUICKSTART.md` for a 5-minute tutorial
 
@@ -397,7 +425,7 @@ Industrial-digital-twin-by-transformer/
 │   ├── gradio_app.py         # Old simple interface
 │   ├── gradio_full_interface.py  # Old full interface
 │   └── hybrid_transformer.py  # Deprecated HST model
-├── gradio_residual_tft_app.py # 🆕 Enhanced Gradio application
+├── gradio_sensor_transformer_app.py # 🆕 Enhanced Gradio application
 ├── requirements.txt          # Python dependencies
 ├── setup.py                  # Package setup
 ├── LICENSE                   # MIT License
@@ -452,7 +480,7 @@ for signal_idx in range(num_signals):
         ensemble_pred[:, signal_idx] = base_pred[:, signal_idx]
 ```
 
-**Note**: The enhanced Gradio interface (`gradio_residual_tft_app.py`) automates this entire workflow.
+**Note**: The enhanced Gradio interface (`gradio_sensor_transformer_app.py`) automates this entire workflow.
 
 ## 🎯 Performance
 
