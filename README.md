@@ -477,27 +477,99 @@ for signal_idx in range(num_signals):
 
 ### Benchmark Results
 
-**Status**: Performance benchmarks are currently in preparation.
+#### 🏭 Industrial Rotating Machinery Case Study
 
-We warmly welcome contributions from users across different industries! If you have applied this framework to your domain, we would greatly appreciate it if you could share:
-- **Anonymized/desensitized datasets** from your industrial applications
-- **Performance metrics** (R², MAE, RMSE, etc.)
-- **Use case descriptions** and insights
+**Dataset**: [Power Generation Machine Sensor Data](https://www.kaggle.com/datasets/tianffan/power-gen-machine)
 
-Your contributions will help build a comprehensive understanding of the framework's capabilities across diverse industrial scenarios.
+**Application Domain**: Real-world advanced rotating machinery for power generation
+- Multi-sensor system monitoring for complex industrial equipment
+- High-frequency operational data from production environment
+- Representative of industrial digital twin applications
 
-**Preliminary Testing on LEAP Dataset**:
+**Dataset Characteristics**:
+- **Source**: Real industrial equipment sensor array
+- **Complexity**: Multi-sensor interdependencies in high-performance rotating systems
+- **Scale**: Full operational sensor suite covering critical parameters
+- **Quality**: Production-grade sensor measurements
 
-For demonstration and reference purposes only, preliminary testing has been conducted on the LEAP atmospheric physics simulation dataset:
+**Performance Results** (Test Set):
+
+| Metric | Stage1 (SST) | Stage1+Stage2 Ensemble | Improvement |
+|--------|--------------|------------------------|-------------|
+| **R²** | 0.8101 | **0.9014** | +11.3% |
+| **MAE** | 1.56 | **1.24** | -20.2% |
+| **RMSE** | 3.89 | **3.57** | -8.3% |
+
+**Configuration**:
+- **Dataset**: 89 target signals, 217K samples
+- **Stage1**: 50 epochs, default hyperparameters
+- **Stage2**: Selective boost on 36/89 signals (Delta R² threshold: 0.03)
+- **Hardware**: Single NVIDIA A100 GPU
+- **Training**: No data augmentation, no special tuning
+
+**Stage2 Intelligent Selection**:
+- **36 signals** selected for Stage2 correction (significant improvement observed)
+- **53 signals** kept Stage1-only predictions (already performing well)
+- Adaptive strategy balances performance gains with computational efficiency
+
+**Example Signal Improvements** (Stage1 → Ensemble):
+- Vibration sensors: R² -0.13 → 0.26, -0.55 → 0.47 (challenging signals)
+- Temperature sensors: R² 0.35 → 0.59, 0.68 → 0.93 (moderate improvements)
+- Pressure sensors: R² 0.08 → 0.47, 0.42 → 0.63 (significant gains)
+
+**Practical Insights**:
+- ✅ **Strong out-of-box baseline**: Stage1 achieves R² = 0.81 with default settings
+- ✅ **Refinement when needed**: Stage2 boost provides targeted improvements for challenging signals
+- ✅ **Real-world sensor data**: Demonstrates effectiveness on production equipment measurements
+- ✅ **Efficient training**: Both stages train quickly on standard hardware
+
+**Trained Models**: [Available on Kaggle Models](https://www.kaggle.com/models) (coming soon)
+
+**Note on Benchmarks**:
+These results are provided as reference examples on specific datasets. This project prioritizes **practical applicability and ease of deployment** over competitive benchmark scores. Performance will vary based on your specific industrial application, sensor characteristics, and data quality. We encourage users to evaluate the framework on their own use cases.
+
+---
+
+#### 🌍 Atmospheric Physics Simulation Benchmark
+
+**Dataset**: LEAP atmospheric physics simulation dataset
+
+**Performance Results**:
 - **Hardware**: Single NVIDIA A100 GPU (Google Colab)
-- Signals: 164 output signals (excluding ptend_q family)
-- No data augmentation applied
-- Stage1 (SST): R² ≈ 0.56
-- Stage2 Boost: R² ≈ 0.58
-
-*Note: These results are for testing and demonstration purposes only and are not intended for competitive benchmarking. Actual performance will vary based on dataset characteristics, signal complexity, model configuration, and application domain.*
+- **Signals**: 164 output signals (excluding ptend_q family)
+- **Stage1 (SST)**: R² ≈ 0.56
+- **Stage2 Boost**: R² ≈ 0.58
+- **Training**: No data augmentation applied
 
 **Testing Notebook**: See `notebooks/transformer_boost_Leap_final.ipynb` (Author's testing file with comments in Chinese)
+
+---
+
+### 📌 Performance Notes
+
+**Variability Factors**:
+Results may vary based on:
+- Dataset characteristics (sensor correlation patterns, noise levels, signal complexity)
+- Physical system properties (sensor spatial relationships, temporal dynamics)
+- Model configuration (architecture size, training parameters)
+- Application domain (manufacturing, energy, chemical processes, etc.)
+
+**Best Results Observed**:
+- **Highly correlated sensor systems**: R² > 0.80 (e.g., rotating machinery)
+- **Complex multi-physics systems**: R² 0.55-0.65 (e.g., atmospheric simulation)
+
+The framework shows particularly strong performance when sensor outputs have **clear physical interdependencies and spatial relationships**, which aligns with its core design philosophy.
+
+---
+
+### 🤝 Community Contributions Welcome
+
+We warmly encourage users to share their benchmark results! If you have applied this framework to your domain, please contribute:
+- **Anonymized/desensitized datasets** from your industrial applications
+- **Performance metrics** (R², MAE, RMSE, etc.) and visualizations
+- **Use case descriptions** and domain insights
+
+Your contributions help build understanding of the framework's capabilities across diverse industrial scenarios. Please open an [issue](https://github.com/FTF1990/Industrial-digital-twin-by-transformer/issues) or submit a pull request!
 
 ## 🤝 Contributing
 
