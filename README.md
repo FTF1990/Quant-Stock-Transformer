@@ -492,33 +492,41 @@ for signal_idx in range(num_signals):
 - **Scale**: Full operational sensor suite covering critical parameters
 - **Quality**: Production-grade sensor measurements
 
-**Performance Results** (Stage1 SST):
+**Performance Results** (Test Set):
 
-| Metric | Test Set | Validation Set | Notes |
-|--------|----------|----------------|-------|
-| **R² Score** | **0.8101** | 0.7699 | Excellent prediction accuracy |
-| **MAE** | 1.56 | 1.29 | Low mean absolute error |
-| **RMSE** | 3.89 | - | Root mean squared error |
-| **Training** | 50 epochs | No data augmentation | Out-of-the-box performance |
-| **Hardware** | Standard GPU | ~2 min/epoch | Fast training convergence |
+| Metric | Stage1 (SST) | Stage1+Stage2 Ensemble | Improvement |
+|--------|--------------|------------------------|-------------|
+| **R²** | 0.8101 | **0.9014** | +11.3% |
+| **MAE** | 1.56 | **1.24** | -20.2% |
+| **RMSE** | 3.89 | **3.57** | -8.3% |
 
-**Training Details**:
-- Best validation loss: 0.0983 (Epoch 47)
-- Final training loss: 0.0281
-- No hyperparameter fine-tuning required
-- Converged in < 50 epochs
+**Configuration**:
+- **Dataset**: 89 target signals, 217K samples
+- **Stage1**: 50 epochs, default hyperparameters
+- **Stage2**: Selective boost on 36/89 signals (Delta R² threshold: 0.03)
+- **Hardware**: Single NVIDIA A100 GPU
+- **Training**: No data augmentation, no special tuning
 
-**Key Achievements**:
-- ✅ **Strong baseline performance**: R² = 0.81 on held-out test set with Stage1 SST alone
-- ✅ **Real-world applicability**: Demonstrates effectiveness on actual industrial sensor data
-- ✅ **No special tuning required**: Robust performance without extensive hyperparameter optimization
-- ✅ **Fast training**: Practical training time on standard GPU hardware
-- ✅ **Production-ready**: Results validate the framework for industrial deployment
+**Stage2 Intelligent Selection**:
+- **36 signals** selected for Stage2 correction (significant improvement observed)
+- **53 signals** kept Stage1-only predictions (already performing well)
+- Adaptive strategy balances performance gains with computational efficiency
 
-**Trained Model**: [Available on Kaggle Models](https://www.kaggle.com/models) (coming soon)
+**Example Signal Improvements** (Stage1 → Ensemble):
+- Vibration sensors: R² -0.13 → 0.26, -0.55 → 0.47 (challenging signals)
+- Temperature sensors: R² 0.35 → 0.59, 0.68 → 0.93 (moderate improvements)
+- Pressure sensors: R² 0.08 → 0.47, 0.42 → 0.63 (significant gains)
 
-**Significance**:
-This case study demonstrates the framework's capability to model **complex sensor relationships in real industrial systems**, where multiple sensors exhibit intricate spatial and physical dependencies. The high R² score validates the Transformer-based sequential sensor modeling approach for industrial digital twin applications.
+**Practical Insights**:
+- ✅ **Strong out-of-box baseline**: Stage1 achieves R² = 0.81 with default settings
+- ✅ **Refinement when needed**: Stage2 boost provides targeted improvements for challenging signals
+- ✅ **Real-world sensor data**: Demonstrates effectiveness on production equipment measurements
+- ✅ **Efficient training**: Both stages train quickly on standard hardware
+
+**Trained Models**: [Available on Kaggle Models](https://www.kaggle.com/models) (coming soon)
+
+**Note on Benchmarks**:
+These results are provided as reference examples on specific datasets. This project prioritizes **practical applicability and ease of deployment** over competitive benchmark scores. Performance will vary based on your specific industrial application, sensor characteristics, and data quality. We encourage users to evaluate the framework on their own use cases.
 
 ---
 
