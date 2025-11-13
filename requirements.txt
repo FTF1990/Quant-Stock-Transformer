@@ -5,6 +5,9 @@ pandas>=2.0.0
 scikit-learn>=1.3.0
 scipy>=1.7.0
 
+# Data Fetching
+yfinance>=0.2.0
+
 # Visualization
 matplotlib>=3.7.0
 seaborn>=0.12.0
@@ -15,10 +18,16 @@ gradio>=4.0.0
 # Progress Bars
 tqdm>=4.62.0
 
-# Jupyter Support (Optional)
+# Jupyter Support
 jupyter>=1.0.0
 notebook>=6.4.0
-ipywidgets>=7.6.0
+ipywidgets>=8.0.0
+
+# LLM Providers (for Stock Selection Agent)
+google-generativeai>=0.3.0  # Google AI (Gemini)
+openai>=1.0.0               # OpenAI GPT
+anthropic>=0.18.0           # Anthropic Claude
+# Note: Only install the LLM provider you plan to use
 
 # Optional: For GPU acceleration
 # If using CUDA, install appropriate PyTorch version:
