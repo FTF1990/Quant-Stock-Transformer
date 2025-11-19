@@ -15,20 +15,26 @@
 ### 🎯 Key Innovation | 核心创新
 
 1. **Spatial-Temporal Separation | 空间-时序分离**
-   - Stage 1: Static Sensor Transformer (SST) for spatial relationships
+   - Stage 1: Dual-output SST for spatial relationships (T-day & T+1-day)
    - Stage 2: Internal feature extraction (attention + encoder + residuals)
-   - Stage 3: Temporal models for time-series enhancement
+   - Stage 3: Temporal models for time-series enhancement (LSTM/GRU/TCN)
 
-2. **AI-Powered Stock Selection | AI驱动的股票选择**
-   - LLM-based intelligent stock correlation analysis
-   - Support for multiple markets (US, CN, HK, JP)
-   - Automatic industry chain analysis
+2. **Complete End-to-End Pipeline | 完整端到端流程**
+   - Stock selection JSON import
+   - Intelligent multi-market data fetching with batching
+   - Automated preprocessing and feature engineering
+   - Multi-model training and comparison
+   - Comprehensive evaluation metrics
 
-3. **Multi-Model Comparison | 多模型对比**
-   - SST (baseline)
-   - SST + iTransformer
-   - SST + LSTM
-   - SST + GRU
+3. **Dual Usage Modes | 双使用模式**
+   - **CLI**: Full-featured command-line pipeline
+   - **UI**: Gradio-based visual interface with 7-step workflow
+
+4. **Multi-Model Comparison | 多模型对比**
+   - SST (baseline with dual outputs)
+   - SST + LSTM (with Attention)
+   - SST + GRU (lightweight)
+   - SST + TCN (temporal convolution)
 
 ---
 
@@ -47,39 +53,117 @@ pip install -r requirements.txt
 
 ### 🎮 Usage | 使用方法
 
-#### Option 1: Google Colab (Recommended | 推荐)
+#### ✨ Option 1: Gradio Visual UI (Recommended | 推荐)
 
-1. **Stock Selection Agent | 股票选择智能体**
-   - Open `notebooks/stock_analysis_agent.ipynb` in Google Colab
-   - Configure your LLM (Google AI / OpenAI / DeepSeek)
-   - Run cells to generate stock list and fetch historical data
+Launch the interactive web interface with 7-step visual workflow:
 
-2. **Model Training Pipeline | 模型训练流程**
-   - Open `notebooks/model_training_pipeline.ipynb` in Google Colab
-   - Load the data from Step 1
-   - Train and evaluate models
+```bash
+python gradio_pipeline_ui.py
+```
 
-#### Option 2: Local Environment | 本地环境
+Then open your browser at `http://localhost:7860`
+
+**7-Step Workflow**:
+1. 📋 **Load Stock JSON** - Upload your stock selection file
+2. 📊 **Fetch Data** - Intelligent batch data fetching (US/CN/HK/JP markets)
+3. 🔄 **Preprocess** - Calculate returns and split datasets
+4. 🧠 **Train SST** - Dual-output Transformer model
+5. 🔍 **Extract Features** - Attention weights, encoder outputs, residuals
+6. ⏰ **Train Temporal** - LSTM/GRU/TCN models (choose any)
+7. 📈 **Evaluate** - Compare all models with metrics and charts
+
+**Features**:
+- Real-time progress tracking
+- Interactive parameter configuration
+- Rich visualizations (training curves, feature distributions, performance comparisons)
+- No command-line required
+
+See **[UI_USAGE.md](UI_USAGE.md)** for detailed usage guide.
+
+---
+
+#### 🖥️ Option 2: Command-Line Pipeline
+
+Run the complete training pipeline programmatically:
+
+```bash
+# Basic usage
+python complete_training_pipeline.py \
+    --stocks_json data/demo.json \
+    --target_market CN \
+    --target_stock 600519
+
+# Full parameters
+python complete_training_pipeline.py \
+    --stocks_json data/demo.json \
+    --target_market CN \
+    --target_stock 600519 \
+    --start_date 2020-01-01 \
+    --end_date 2024-12-31 \
+    --fetch_data \
+    --sst_epochs 50 \
+    --temporal_epochs 100 \
+    --seq_len 60 \
+    --device cuda
+```
+
+**Key Parameters**:
+- `--stocks_json`: Path to stock selection JSON
+- `--target_market`: Target market (US/CN/HK/JP)
+- `--target_stock`: Stock symbol to predict
+- `--fetch_data`: Re-fetch historical data (vs. using cache)
+- `--sst_epochs`: SST training epochs (default: 50)
+- `--temporal_epochs`: Temporal model epochs (default: 100)
+- `--device`: cpu or cuda
+
+See **[PIPELINE_FLOW_CONFIRMATION.md](PIPELINE_FLOW_CONFIRMATION.md)** for complete flow verification.
+
+---
+
+#### 📋 Option 3: Python API
+
+Use individual components in your code:
 
 ```python
-# Example: Using the SST model
-from models.spatial_feature_extractor import SpatialFeatureExtractor
+from complete_training_pipeline import (
+    StockDataFetcher,
+    StockDataProcessor,
+    DualOutputSST,
+    ModelTrainer,
+    ModelEvaluator
+)
 
-# Create model
-model = SpatialFeatureExtractor(
-    num_boundary_sensors=23,
+# Fetch data
+fetcher = StockDataFetcher()
+historical_data = fetcher.fetch_historical_data(
+    stocks_json=your_stocks,
+    start_date="2020-01-01",
+    end_date="2024-12-31"
+)
+
+# Preprocess
+processor = StockDataProcessor(
+    historical_data=historical_data,
+    target_market="CN",
+    target_stock="600519"
+)
+X, y_T, y_T1, dates = processor.prepare_training_data()
+
+# Train SST
+sst_model = DualOutputSST(
+    num_boundary_sensors=X.shape[1],
     num_target_sensors=1,
     d_model=128,
     nhead=8,
     num_layers=3
 )
 
-# Extract internal features
-predictions, features = model.forward_with_features(
-    boundary_conditions,
-    return_attention=True,
-    return_encoder_output=True
-)
+trainer = ModelTrainer(device='cuda')
+history = trainer.train_sst(sst_model, X_train, y_T_train, y_T1_train, ...)
+
+# Evaluate
+evaluator = ModelEvaluator(device='cuda')
+metrics = evaluator.evaluate_sst(sst_model, X_test, y_T_test, y_T1_test)
 ```
 
 ---
@@ -88,15 +172,14 @@ predictions, features = model.forward_with_features(
 
 ### Core Documentation | 核心文档
 
-- **[Feature Extraction Guide](docs/FEATURE_EXTRACTION_GUIDE.md)** - Complete technical guide for extracting SST internal features
+- **[UI Usage Guide](UI_USAGE.md)** - Complete 7-step visual UI guide
+- **[Pipeline Flow Confirmation](PIPELINE_FLOW_CONFIRMATION.md)** - End-to-end flow verification
+- **[Feature Extraction Guide](docs/FEATURE_EXTRACTION_GUIDE.md)** - Technical guide for SST features
 - **[SST Internals README](docs/SST_INTERNALS_EXTRACTION_README.md)** - Quick start for feature extraction
-- **[Demo Notebook](docs/sst_feature_extraction_demo.md)** - Complete demonstration of the system
 
-### Technical Papers | 技术文档
+### Example Data | 示例数据
 
-- **Three-Stage Framework** - Detailed explanation of the spatial-temporal separation approach
-- **SST Architecture** - Sensor Sequence Transformer design
-- **Feature Engineering** - Attention weights and encoder output analysis
+- **[data/demo.json](data/demo.json)** - Sample stock selection (28 stocks across 4 markets)
 
 ---
 
@@ -107,150 +190,202 @@ Quant-Stock-Transformer/
 ├── models/                          # Core model implementations
 │   ├── static_transformer.py        # SST base model
 │   ├── spatial_feature_extractor.py # SST with feature extraction
-│   ├── relationship_extractors.py   # Feature extractors
-│   └── temporal_predictor.py        # Temporal models
+│   ├── relationship_extractors.py   # Attention/embedding extractors
+│   └── temporal_predictor.py        # LSTM/GRU/TCN temporal models
+├── data/
+│   ├── demo.json                    # 📋 Sample stock selection (28 stocks)
+│   └── default_signals_config.json  # Signal configuration
+├── complete_training_pipeline.py    # 🚀 Complete CLI training pipeline (1139 lines)
+├── gradio_pipeline_ui.py            # 🎨 Gradio visual UI (1173 lines)
 ├── notebooks/                       # Jupyter/Colab notebooks
-│   ├── stock_analysis_agent.ipynb   # 🤖 AI stock selection agent
-│   └── model_training_pipeline.ipynb # 🚀 Complete training pipeline
+│   ├── stock_analysis_agent.ipynb   # 🤖 LLM-based stock analysis (optional)
+│   └── model_training_pipeline.ipynb # Model training reference
 ├── examples/                        # Example scripts
 │   └── extract_sst_internals_demo.py # Feature extraction demo
 ├── docs/                            # Documentation
 │   ├── FEATURE_EXTRACTION_GUIDE.md
-│   └── SST_INTERNALS_EXTRACTION_README.md
+│   ├── SST_INTERNALS_EXTRACTION_README.md
+│   └── sst_feature_extraction_demo.md
+├── UI_USAGE.md                      # 📖 Gradio UI usage guide
+├── PIPELINE_FLOW_CONFIRMATION.md    # ✅ Flow verification doc
 └── README.md                        # This file
 ```
 
 ---
 
-## 🤖 AI Stock Analysis Agent | 智能股票分析
+## 📊 Stock Selection | 股票选择
 
-### Features | 功能特性
+### Using Claude AI Agent (Recommended | 推荐)
 
-- ✅ **Multi-LLM Support** - Google AI (Gemini), OpenAI, DeepSeek, Custom APIs
-- ✅ **Multi-Market Coverage** - US, China A-shares, Hong Kong, Japan
-- ✅ **Industry Chain Analysis** - Upstream/downstream/competitors/correlations
-- ✅ **Automatic Data Fetching** - Historical data (hourly/daily) with market indices
-- ✅ **Configurable Minimums** - Set minimum stocks per market
+Generate your stock selection JSON using Claude AI:
 
-### Usage Example | 使用示例
+1. Open Claude (claude.ai)
+2. Describe your stock selection strategy
+3. Ask Claude to generate a JSON file in the required format
+4. Save the JSON and use it with the pipeline
 
-```python
-from notebooks.stock_analysis_agent import StockAnalysisAgent, LLMConfig
-
-# Configure LLM
-llm_config = LLMConfig(provider="google")  # or "openai", "deepseek"
-
-# Create agent
-agent = StockAnalysisAgent(llm_config)
-
-# Analyze industry
-result = agent.analyze_industry(
-    industry="半导体",  # Semiconductor
-    markets=["US", "CN", "HK", "JP"],
-    min_stocks_per_market={"US": 8, "CN": 10, "HK": 5, "JP": 5}
-)
-
-# Save results
-agent.save_results(
-    json_path="selected_stocks.json",
-    report_path="analysis_report.md"
-)
+**Required JSON Format**:
+```json
+{
+  "US": [
+    {"symbol": "NVDA", "name": "NVIDIA", "reason": "...", "category": "..."}
+  ],
+  "CN": [
+    {"symbol": "600519", "name": "贵州茅台", "reason": "...", "category": "..."}
+  ],
+  "HK": [...],
+  "JP": [...]
+}
 ```
+
+### Using Demo Data | 使用示例数据
+
+Start with the provided demo.json:
+
+```bash
+# 28 stocks across 4 markets
+data/demo.json
+  ├── US: 8 stocks (NVDA, AMD, INTC, TSM, ASML, QCOM, AVGO, MU)
+  ├── CN: 10 stocks (贵州茅台, 招商银行, etc.)
+  ├── HK: 5 stocks (腾讯, 阿里巴巴, etc.)
+  └── JP: 5 stocks (Sony, 京瓷, etc.)
+```
+
+### Optional: LLM-Powered Analysis | LLM驱动分析（可选）
+
+For advanced users, use the notebook-based stock analysis agent:
+
+- `notebooks/stock_analysis_agent.ipynb` - Industry chain analysis with LLM
+- Supports: Google AI (Gemini), OpenAI, DeepSeek
+- Multi-market coverage: US, CN, HK, JP
+- Automatic data fetching
 
 ---
 
 ## 📈 Data Fetching | 数据获取
 
-### Supported Data Sources | 支持的数据源
+### Intelligent Batch Fetching | 智能分批抓取
 
-- **A-shares (CN)**: AkShare - Open source, no API key required
-- **US/HK/JP**: yfinance - Free Yahoo Finance API
+**Features**:
+- ✅ **Multi-Source Support**
+  - A-shares (CN): AkShare (free, no API key)
+  - US/HK/JP: yfinance (free Yahoo Finance API)
+- ✅ **Smart Batching** - Avoid API rate limits
+  - Configurable batch size (default: 5 stocks/batch)
+  - Configurable delays (default: 2s between batches)
+- ✅ **Auto-Retry** - Handles network errors gracefully
+- ✅ **Progress Tracking** - Real-time progress display
+- ✅ **Market Indices** - Includes S&P 500, 上证指数, 恒生指数, 日经225
 
-### Features | 功能
-
-- ✅ Hourly or daily data
-- ✅ Market indices included
-- ✅ OHLCV + Volume
-- ✅ Automatic data cleaning
-- ✅ Pickle format for fast loading
-
+**Example**:
 ```python
-from notebooks.stock_analysis_agent import StockDataFetcher
+from complete_training_pipeline import StockDataFetcher
 
 fetcher = StockDataFetcher()
-
 historical_data = fetcher.fetch_historical_data(
-    stocks_json=selected_stocks,
+    stocks_json=my_stocks,
     start_date="2020-01-01",
     end_date="2024-12-31",
-    interval="1d",  # "1h" for hourly
-    include_market_index=True
+    interval="1d",                    # "1h" for hourly data
+    include_market_index=True,
+    batch_size=5,                     # 5 stocks per batch
+    delay_between_batches=2.0,        # 2 seconds between batches
+    delay_between_stocks=0.5          # 0.5 seconds between stocks
 )
 
 fetcher.save_data("historical_data.pkl")
 ```
 
+**Data Fields**:
+- Open, High, Low, Close
+- Volume
+- Date index
+
 ---
 
 ## 🧠 Model Training | 模型训练
 
-### Stage 1: SST Training | SST训练
+### Complete 3-Stage Pipeline | 完整三阶段流程
 
-Train a dual-output SST that predicts both T-day and T+1-day returns:
+**Stage 1: Dual-Output SST**
+- Simultaneously predicts T-day and T+1-day returns
+- Transformer encoder (8 heads, 3 layers, 128 hidden dim)
+- Global average pooling
+- Dual output heads
 
 ```python
-from examples.extract_sst_internals_demo import DualOutputSST
+from complete_training_pipeline import DualOutputSST
 
 model = DualOutputSST(
-    num_boundary_sensors=23,
+    num_boundary_sensors=num_features,
     num_target_sensors=1,
     d_model=128,
     nhead=8,
-    num_layers=3
+    num_layers=3,
+    enable_feature_extraction=True
 )
 
-# Train
+# Returns both T and T+1 predictions
 pred_T, pred_T1 = model(boundary_conditions)
-loss = criterion(pred_T, target_T) + criterion(pred_T1, target_T1)
 ```
 
-### Stage 2: Feature Extraction | 特征提取
-
-Extract internal features from trained SST:
+**Stage 2: Feature Extraction**
+- Encoder outputs: [batch, sensors, 128]
+- Attention weights: [batch, layers, heads, sensors, sensors]
+- Pooled features: [batch, 128]
+- Residuals: actual - predicted
 
 ```python
+# Extract features
 (pred_T, pred_T1), features = model.forward_with_features(
     boundary_conditions,
     return_attention=True,
     return_encoder_output=True
 )
 
-# features contains:
-# - attention_weights: [batch, num_layers, num_heads, 23, 23]
-# - encoder_output: [batch, 23, 128]
-# - embeddings: [batch, 23, 128]
-# - pooled_features: [batch, 128]
+encoder_output = features['encoder_output']
+attention_weights = features['attention_weights']
+pooled_features = features['pooled_features']
 
 # Calculate residuals
 residual_T = target_T - pred_T
 residual_T1 = target_T1 - pred_T1
 ```
 
-### Stage 3: Temporal Enhancement | 时序增强
+**Stage 3: Temporal Models**
 
-Train temporal models using extracted features:
+Train time-series models using SST features:
 
 ```python
-# Prepare LSTM input from extracted features
-lstm_input = build_sequence_features(
-    attention_features,   # 10-dim
-    encoder_features,     # 32-dim
-    residual_features     # 2-dim
-)  # Result: [batch, sequence_length, 44]
+from complete_training_pipeline import (
+    LSTMTemporalPredictor,
+    GRUTemporalPredictor,
+    TCNTemporalPredictor
+)
 
-# Train LSTM
-lstm = nn.LSTM(input_size=44, hidden_size=64, num_layers=2)
-output, (h_n, c_n) = lstm(lstm_input)
+# LSTM with Attention
+lstm_model = LSTMTemporalPredictor(
+    input_dim=num_features + relationship_dim,
+    hidden_dim=128,
+    num_layers=2,
+    output_dim=1,
+    use_attention=True
+)
+
+# GRU (lightweight)
+gru_model = GRUTemporalPredictor(
+    input_dim=num_features + relationship_dim,
+    hidden_dim=128,
+    num_layers=2,
+    output_dim=1
+)
+
+# TCN (parallel)
+tcn_model = TCNTemporalPredictor(
+    input_dim=num_features + relationship_dim,
+    num_channels=[64, 128, 128, 64],
+    output_dim=1
+)
 ```
 
 ---
@@ -259,22 +394,81 @@ output, (h_n, c_n) = lstm(lstm_input)
 
 ### Metrics | 评估指标
 
-- **MSE** - Mean Squared Error
-- **MAE** - Mean Absolute Error
-- **Direction Accuracy** - Prediction direction correctness
-- **Sharpe Ratio** - Risk-adjusted returns
-- **Max Drawdown** - Maximum loss from peak
+- ✅ **MSE** (Mean Squared Error) - Lower is better
+- ✅ **MAE** (Mean Absolute Error) - Lower is better
+- ✅ **Direction Accuracy** - Percentage of correct up/down predictions
+- ✅ **Sharpe Ratio** - Risk-adjusted returns (annualized)
 
-### Comparison | 模型对比
+### Model Comparison | 模型对比
 
-| Model | MSE | MAE | Direction Acc | Sharpe | Status |
-|-------|-----|-----|---------------|--------|--------|
-| SST (baseline) | - | - | - | - | ✅ Implemented |
-| SST + iTransformer | - | - | - | - | 🚧 In Progress |
-| SST + LSTM | - | - | - | - | 🚧 In Progress |
-| SST + GRU | - | - | - | - | 🚧 In Progress |
+| Model | Status | Parameters | Features |
+|-------|--------|------------|----------|
+| SST (baseline) | ✅ Implemented | ~500K | Dual outputs (T + T+1) |
+| SST + LSTM | ✅ Implemented | ~600K | Attention mechanism |
+| SST + GRU | ✅ Implemented | ~550K | Lightweight version |
+| SST + TCN | ✅ Implemented | ~580K | Parallel computation |
 
-*Note: Metrics will be updated after testing phase*
+**Evaluation Output**:
+```
+Model    MSE       MAE       Direction_Acc  Sharpe_Ratio
+SST      0.001234  0.025678  52.34%         0.4521
+LSTM     0.001156  0.024532  54.56%         0.5234
+GRU      0.001189  0.024789  53.89%         0.5123
+TCN      0.001201  0.025012  53.12%         0.4987
+```
+
+*Note: Example metrics - actual values depend on data and training*
+
+---
+
+## 🎨 Gradio UI Features | UI功能特性
+
+### Visual Training Pipeline | 可视化训练流程
+
+**7-Step Interactive Workflow**:
+
+1. **📋 Load JSON** - Upload & visualize stock lists
+   - Stock count statistics
+   - Market distribution pie chart
+   - Detailed stock table
+
+2. **📊 Fetch Data** - Intelligent batch data fetching
+   - Date range configuration
+   - Batch size & delay settings
+   - Real-time progress bar
+   - Data statistics table
+
+3. **🔄 Preprocess** - Data preparation
+   - Return calculation (T & T+1)
+   - Dataset split (70/15/15)
+   - Return distribution plots
+
+4. **🧠 Train SST** - Transformer training
+   - Epoch/batch/LR sliders
+   - Real-time training curves
+   - Loss breakdown (T vs T+1)
+
+5. **🔍 Extract Features** - Feature visualization
+   - Feature distribution plots
+   - Residual analysis
+   - Feature heatmaps
+
+6. **⏰ Train Temporal** - Time-series models
+   - Model type selector (LSTM/GRU/TCN)
+   - Sequence length configuration
+   - Training curve display
+
+7. **📈 Evaluate** - Performance comparison
+   - Metrics comparison table
+   - Performance bar charts
+   - Best model highlighting
+
+**Visualizations**:
+- Training loss curves
+- Feature distributions
+- Performance comparison charts
+- Market distribution plots
+- Return histograms
 
 ---
 
@@ -282,29 +476,87 @@ output, (h_n, c_n) = lstm(lstm_input)
 
 ### ✅ Completed | 已完成
 
-- [x] SST base model implementation
+- [x] SST base model with dual outputs (T + T+1)
 - [x] Spatial feature extractor with attention/encoder extraction
-- [x] Dual-output SST (T and T+1 predictions)
-- [x] Feature extraction demo
-- [x] AI stock analysis agent
-- [x] Multi-market data fetcher
+- [x] Complete training pipeline (CLI)
+- [x] Gradio visual UI (7-step workflow)
+- [x] Temporal models (LSTM, GRU, TCN)
+- [x] Multi-market data fetcher with smart batching
+- [x] Model evaluation and comparison
 - [x] Comprehensive documentation
+- [x] Demo stock selection (28 stocks)
 
 ### 🚧 In Progress | 进行中
 
-- [ ] Complete training pipeline notebook
-- [ ] Temporal models (iTransformer, LSTM, GRU)
-- [ ] Feature dimension reduction
-- [ ] Model evaluation and comparison
+- [ ] Advanced feature engineering
+- [ ] Hyperparameter optimization
 - [ ] Backtesting framework
+- [ ] Model ensemble methods
 
 ### 📋 Planned | 计划中
 
 - [ ] Real-time prediction API
-- [ ] Web interface
 - [ ] More temporal models (Informer, Autoformer)
-- [ ] Ensemble methods
 - [ ] Risk management module
+- [ ] Portfolio optimization
+- [ ] Multi-target prediction (volume, volatility)
+
+---
+
+## 💡 Usage Tips | 使用技巧
+
+### For Beginners | 新手建议
+
+1. Start with the Gradio UI (`python gradio_pipeline_ui.py`)
+2. Use the demo.json file for initial testing
+3. Try small epochs first (SST: 20, Temporal: 30)
+4. Use CPU for testing, GPU for production training
+
+### For Advanced Users | 进阶用户
+
+1. Generate custom stock selections with Claude AI
+2. Experiment with hyperparameters
+3. Try different markets and date ranges
+4. Analyze feature importance from SST
+5. Implement custom temporal models
+
+### Performance Optimization | 性能优化
+
+**Training Speed**:
+- Use GPU (`--device cuda`)
+- Increase batch size (if memory allows)
+- Use GRU instead of LSTM for faster training
+- Use TCN for fastest inference
+
+**Data Fetching**:
+- Use cached data (`historical_data.pkl`) when possible
+- Adjust batch size and delays based on network
+- Fetch data overnight for large stock lists
+
+---
+
+## 🐛 Troubleshooting | 常见问题
+
+### Data Fetching Issues
+
+**Problem**: API rate limit errors
+**Solution**: Reduce batch size, increase delays
+
+**Problem**: Stock symbol not found
+**Solution**: Check symbol format (US: AAPL, CN: 600519, HK: 00700, JP: 6758.T)
+
+### Training Issues
+
+**Problem**: Out of memory
+**Solution**: Reduce batch size, use smaller model, reduce sequence length
+
+**Problem**: Slow training
+**Solution**: Use GPU, increase batch size, reduce epochs for testing
+
+### Model Performance
+
+**Problem**: Low accuracy
+**Solution**: More training epochs, different hyperparameters, more data, better stock selection
 
 ---
 
@@ -342,7 +594,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - PyTorch team for the excellent deep learning framework
 - AkShare for providing free A-share data access
 - yfinance for Yahoo Finance data API
-- Google AI, OpenAI, DeepSeek for LLM APIs
+- Gradio team for the amazing UI framework
+- Claude AI for intelligent code assistance
 
 ---
 
