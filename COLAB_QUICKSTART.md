@@ -42,13 +42,15 @@ pn.extension('plotly', 'tabulator', sizing_mode="stretch_width")
 # 导入UI应用
 from panel_pipeline_ui import launch
 
-# 启动应用
+# 启动应用并显示
 print("🚀 正在启动Panel UI...")
 app = launch()
 
-# 显示UI (这行会在cell输出中显示UI)
-app.servable()
+# 直接显示UI (在notebook中内联渲染)
+app
 ```
+
+**重要**: 最后一行 `app` 会直接在notebook中显示UI界面，不会启动服务器！
 
 ---
 
@@ -77,8 +79,8 @@ pn.extension('plotly', 'tabulator')
 
 from panel_pipeline_ui import dashboard
 
-# 直接显示
-dashboard.servable()
+# 直接显示 (不需要.servable()，直接运行对象即可)
+dashboard
 ```
 
 ---
@@ -177,6 +179,34 @@ state.sst_model.load_state_dict(torch.load('sst_model.pth'))
 
 ## 🐛 常见问题解决
 
+### 问题: localhost拒绝连接 / 服务器无法访问
+
+**原因**: Panel试图启动本地服务器，但Colab是云端环境，无法访问localhost。
+
+**解决方案**: ⭐ **不要使用 `.servable()` 或 `.show()`**，直接运行对象：
+
+```python
+# ❌ 错误方式
+app = launch()
+app.servable()  # 这会尝试启动服务器
+
+# ✅ 正确方式
+app = launch()
+app  # 直接运行对象，在notebook中内联显示
+```
+
+或者使用最简单的方式：
+
+```python
+import panel as pn
+pn.extension('plotly', 'tabulator')
+
+from panel_pipeline_ui import dashboard
+dashboard  # 直接显示，不启动服务器
+```
+
+---
+
 ### 问题: UI不显示
 
 ```python
@@ -188,7 +218,11 @@ pn.extension('plotly', 'tabulator', sizing_mode="stretch_width")
 from IPython.display import clear_output
 clear_output()
 
-# 解决方案3: 重启runtime
+# 解决方案3: 确保在cell的最后一行返回对象
+from panel_pipeline_ui import dashboard
+dashboard  # 必须是cell的最后一行，且没有分号
+
+# 解决方案4: 重启runtime
 # 菜单: Runtime → Restart runtime
 ```
 
@@ -256,10 +290,15 @@ from panel_pipeline_ui import launch
 
 print("🚀 启动中...")
 app = launch()
-app.servable()
 
 # ============================================================
-# 现在你可以在下方的UI中进行所有操作!
+# Cell 6: 显示UI (在新cell中运行)
+# ============================================================
+# 直接运行app对象，UI会在下方显示
+app
+
+# ============================================================
+# 现在你可以在上方的UI中进行所有操作!
 # ============================================================
 ```
 

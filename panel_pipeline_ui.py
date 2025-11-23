@@ -1021,17 +1021,48 @@ dashboard = pn.template.MaterialTemplate(
 
 def launch():
     """启动Panel应用"""
+
+    # 检测是否在Colab环境
+    try:
+        import google.colab
+        IN_COLAB = True
+    except:
+        IN_COLAB = False
+
     print("="*80)
     print("🚀 股票预测Pipeline可视化 - Panel UI")
     print("="*80)
     print(f"✅ 设备: {state.device}")
+    print(f"✅ 环境: {'Colab' if IN_COLAB else '本地'}")
     print("✅ Panel已初始化")
     print("="*80)
+
+    if IN_COLAB:
+        print("\n📱 Colab环境检测到!")
+        print("📝 提示: 运行返回的对象会在notebook中直接显示UI")
+        print("💡 使用方法:")
+        print("   app = launch()")
+        print("   app  # 在新cell中运行这行来显示UI\n")
+        print("="*80)
 
     # 返回dashboard以便在Jupyter/Colab中显示
     return dashboard
 
 
 if __name__ == "__main__":
-    # 如果直接运行此文件
-    dashboard.show()
+    # 检测环境
+    try:
+        import google.colab
+        IN_COLAB = True
+    except:
+        IN_COLAB = False
+
+    if IN_COLAB:
+        # Colab中直接显示，不启动服务器
+        print("🌐 在Colab中运行，请使用:")
+        print("   from panel_pipeline_ui import dashboard")
+        print("   dashboard")
+    else:
+        # 本地环境启动服务器
+        print("🌐 在本地环境启动服务器...")
+        dashboard.show(port=5006)
