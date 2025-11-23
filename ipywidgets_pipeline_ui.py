@@ -249,6 +249,19 @@ def create_step2_tab():
         placeholder='YYYY-MM-DD'
     )
 
+    # 添加时间粒度选择
+    interval = widgets.Dropdown(
+        options=[
+            ('按天 (1d)', '1d'),
+            ('按小时 (1h)', '1h'),
+            ('按周 (1wk)', '1wk'),
+            ('按月 (1mo)', '1mo')
+        ],
+        value='1d',
+        description='时间粒度:',
+        style={'description_width': 'initial'}
+    )
+
     batch_size = widgets.IntSlider(
         value=5,
         min=1,
@@ -282,6 +295,7 @@ def create_step2_tab():
                     return
 
                 print("⏳ 正在抓取数据...")
+                print(f"📊 时间粒度: {interval.value}")
 
                 fetcher = StockDataFetcher()
 
@@ -289,7 +303,7 @@ def create_step2_tab():
                     stocks_json=state.stocks_json,
                     start_date=start_date.value,
                     end_date=end_date.value,
-                    interval="1d",
+                    interval=interval.value,  # 使用用户选择的interval
                     include_market_index=True,
                     batch_size=int(batch_size.value),
                     delay_between_batches=float(delay.value)
@@ -300,6 +314,7 @@ def create_step2_tab():
 
                 print("## ✅ 数据抓取完成\n")
                 print(f"**日期范围**: {start_date.value} 至 {end_date.value}")
+                print(f"**时间粒度**: {interval.value}")
                 print(f"**目标市场**: {target_market.value}\n")
 
                 # 生成统计表格
@@ -335,7 +350,7 @@ def create_step2_tab():
     return widgets.VBox([
         header,
         widgets.HBox([target_market, start_date, end_date]),
-        widgets.HBox([batch_size, delay]),
+        widgets.HBox([interval, batch_size, delay]),
         fetch_button,
         output_status,
         output_table
