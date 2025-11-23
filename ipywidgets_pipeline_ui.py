@@ -109,7 +109,70 @@ def create_step1_tab():
                 # 读取上传的文件
                 uploaded_file = list(file_upload.value.values())[0]
                 content = uploaded_file['content']
-                stocks_json = json.loads(content.decode('utf-8'))
+                raw_json = json.loads(content.decode('utf-8'))
+
+                # 转换新格式JSON为标准格式
+                stocks_json = {}
+                rows = []
+
+                # 处理target_stock（单个股票对象）
+                if 'target_stock' in raw_json:
+                    target = raw_json['target_stock']
+                    if isinstance(target, dict) and 'symbol' in target:
+                        # 检测市场（根据股票代码）
+                        symbol = target['symbol']
+                        market = 'CN' if symbol.startswith('6') or symbol.startswith('0') or symbol.startswith('3') else 'US'
+
+                        if market not in stocks_json:
+                            stocks_json[market] = []
+
+                        stocks_json[market].append(target)
+
+                        rows.append({
+                            '类型': '目标股票',
+                            '代码': target['symbol'],
+                            '名称': target['name'],
+                            '行业': target.get('industry', 'N/A'),
+                            '说明': target.get('reason', '主营: ' + ', '.join(target.get('main_business', [])))
+                        })
+
+                # 处理related_stocks（嵌套结构）
+                if 'related_stocks' in raw_json:
+                    related = raw_json['related_stocks']
+                    for category, stocks_list in related.items():
+                        if isinstance(stocks_list, list):
+                            for stock in stocks_list:
+                                if isinstance(stock, dict) and 'symbol' in stock:
+                                    # 检测市场
+                                    symbol = stock['symbol']
+                                    market = 'CN' if symbol.startswith('6') or symbol.startswith('0') or symbol.startswith('3') else 'US'
+
+                                    if market not in stocks_json:
+                                        stocks_json[market] = []
+
+                                    stocks_json[market].append(stock)
+
+                                    rows.append({
+                                        '类型': category,
+                                        '代码': stock['symbol'],
+                                        '名称': stock['name'],
+                                        '行业': stock.get('category', 'N/A'),
+                                        '说明': stock.get('reason', 'N/A')
+                                    })
+
+                # 如果是旧格式（市场-股票数组），直接使用
+                if not stocks_json:
+                    stocks_json = raw_json
+                    for market, stocks in stocks_json.items():
+                        if isinstance(stocks, list):
+                            for stock in stocks:
+                                rows.append({
+                                    '类型': market,
+                                    '代码': stock.get('symbol', 'N/A'),
+                                    '名称': stock.get('name', 'N/A'),
+                                    '行业': stock.get('category', 'N/A'),
+                                    '说明': stock.get('reason', 'N/A')
+                                })
 
                 state.stocks_json = stocks_json
 
@@ -122,23 +185,12 @@ def create_step1_tab():
                 for market, stocks in stocks_json.items():
                     print(f"- **{market}市场**: {len(stocks)}只")
 
-                # 生成详细表格
-                rows = []
-                for market, stocks in stocks_json.items():
-                    for stock in stocks:
-                        rows.append({
-                            '市场': market,
-                            '代码': stock['symbol'],
-                            '名称': stock['name'],
-                            '类别': stock.get('category', 'N/A'),
-                            '理由': stock.get('reason', 'N/A')
-                        })
-
-                df = pd.DataFrame(rows)
-
-                with output_table:
-                    clear_output()
-                    display(df)
+                # 显示详细表格
+                if rows:
+                    df = pd.DataFrame(rows)
+                    with output_table:
+                        clear_output()
+                        display(df)
 
                 # 生成市场分布饼图
                 market_counts = {market: len(stocks) for market, stocks in stocks_json.items()}
@@ -154,6 +206,8 @@ def create_step1_tab():
 
             except Exception as e:
                 print(f"❌ 加载失败: {str(e)}")
+                import traceback
+                traceback.print_exc()
 
     load_button.on_click(on_load_clicked)
 
