@@ -1168,6 +1168,7 @@ if __name__ == "__main__":
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
-        share=False,
-        show_error=True
+        share=True,              # Set to True for public URL (useful for Colab)
+        show_error=True,
+        debug=False
     )
