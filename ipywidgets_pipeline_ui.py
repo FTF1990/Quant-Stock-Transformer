@@ -224,13 +224,13 @@ def create_step1_tab():
 
 
 # ============================================================================
-# 步骤2：数据抓取
+# 步骤2：数据抓取与加载
 # ============================================================================
 
 def create_step2_tab():
     """创建步骤2的Tab内容"""
 
-    # 创建组件
+    # 创建组件 - 数据抓取
     target_market = widgets.Dropdown(
         options=['US', 'CN', 'HK', 'JP'],
         value='CN',
@@ -283,8 +283,71 @@ def create_step2_tab():
         layout=widgets.Layout(width='200px')
     )
 
+    # 组件 - 加载已保存数据
+    load_csv_dropdown = widgets.Dropdown(
+        options=['选择CSV文件...'],
+        description='选择文件:',
+        style={'description_width': 'initial'},
+        layout=widgets.Layout(width='400px')
+    )
+
+    refresh_csv_button = widgets.Button(
+        description='🔄 刷新列表',
+        button_style='info',
+        layout=widgets.Layout(width='120px')
+    )
+
+    load_csv_button = widgets.Button(
+        description='📂 加载选中数据',
+        button_style='success',
+        layout=widgets.Layout(width='200px')
+    )
+
     output_status = widgets.Output()
     output_table = widgets.Output()
+
+    def save_data_to_csv(historical_data, target_market_name):
+        """保存数据到CSV文件"""
+        try:
+            import os
+            os.makedirs('data', exist_ok=True)
+
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            saved_files = []
+
+            for market, stocks_data in historical_data.items():
+                for symbol, df in stocks_data.items():
+                    if len(df) > 0:
+                        # 文件名格式: market_symbol_startdate_enddate_timestamp.csv
+                        start_str = df.index[0].strftime('%Y%m%d')
+                        end_str = df.index[-1].strftime('%Y%m%d')
+                        filename = f"data/{market}_{symbol}_{start_str}_{end_str}_{timestamp}.csv"
+
+                        # 保存CSV
+                        df.to_csv(filename)
+                        saved_files.append(filename)
+
+            return saved_files
+        except Exception as e:
+            raise Exception(f"CSV保存失败: {str(e)}")
+
+    def refresh_csv_list():
+        """刷新CSV文件列表"""
+        try:
+            import os
+            import glob
+
+            csv_files = glob.glob('data/*.csv')
+            if csv_files:
+                # 按修改时间倒序排序
+                csv_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                options = ['选择CSV文件...'] + csv_files
+            else:
+                options = ['选择CSV文件... (data文件夹为空)']
+
+            load_csv_dropdown.options = options
+        except Exception as e:
+            print(f"刷新列表失败: {str(e)}")
 
     def on_fetch_clicked(b):
         with output_status:
@@ -303,16 +366,23 @@ def create_step2_tab():
                     stocks_json=state.stocks_json,
                     start_date=start_date.value,
                     end_date=end_date.value,
-                    interval=interval.value,  # 使用用户选择的interval
+                    interval=interval.value,
                     include_market_index=True,
                     batch_size=int(batch_size.value),
                     delay_between_batches=float(delay.value)
                 )
 
                 state.historical_data = historical_data
+
+                # 保存为pickle
                 fetcher.save_data("historical_data.pkl")
 
-                print("## ✅ 数据抓取完成\n")
+                # 保存为CSV
+                print("\n💾 正在保存CSV文件...")
+                saved_files = save_data_to_csv(historical_data, target_market.value)
+                print(f"✅ 已保存 {len(saved_files)} 个CSV文件到data文件夹")
+
+                print("\n## ✅ 数据抓取完成\n")
                 print(f"**日期范围**: {start_date.value} 至 {end_date.value}")
                 print(f"**时间粒度**: {interval.value}")
                 print(f"**目标市场**: {target_market.value}\n")
@@ -339,19 +409,99 @@ def create_step2_tab():
                     market_data = historical_data[target_market.value]
                     print(f"\n**{target_market.value}市场**: 成功获取{len(market_data)}支股票数据")
 
+                # 刷新CSV列表
+                refresh_csv_list()
+
             except Exception as e:
                 print(f"❌ 数据抓取失败: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+    def on_refresh_csv_clicked(b):
+        with output_status:
+            clear_output()
+            print("🔄 正在刷新CSV文件列表...")
+            refresh_csv_list()
+            print(f"✅ 找到 {len(load_csv_dropdown.options) - 1} 个CSV文件")
+
+    def on_load_csv_clicked(b):
+        with output_status:
+            clear_output()
+            try:
+                selected_file = load_csv_dropdown.value
+                if selected_file.startswith('选择CSV文件'):
+                    print("❌ 请先选择一个CSV文件")
+                    return
+
+                print(f"⏳ 正在加载: {selected_file}")
+
+                # 从文件名解析信息
+                import os
+                basename = os.path.basename(selected_file)
+                parts = basename.replace('.csv', '').split('_')
+
+                if len(parts) >= 2:
+                    market = parts[0]
+                    symbol = parts[1]
+
+                    # 读取CSV
+                    df = pd.read_csv(selected_file, index_col=0, parse_dates=True)
+
+                    # 初始化historical_data结构
+                    if state.historical_data is None:
+                        state.historical_data = {}
+
+                    if market not in state.historical_data:
+                        state.historical_data[market] = {}
+
+                    state.historical_data[market][symbol] = df
+
+                    print(f"✅ 成功加载: {market} - {symbol}")
+                    print(f"📊 数据条数: {len(df)}")
+                    print(f"📅 日期范围: {df.index[0]} 至 {df.index[-1]}")
+
+                    # 显示数据预览
+                    with output_table:
+                        clear_output()
+                        print(f"\n数据预览 ({symbol}):")
+                        display(df.tail(10))
+
+                else:
+                    print("❌ CSV文件名格式不正确")
+
+            except Exception as e:
+                print(f"❌ 加载失败: {str(e)}")
+                import traceback
+                traceback.print_exc()
 
     fetch_button.on_click(on_fetch_clicked)
+    refresh_csv_button.on_click(on_refresh_csv_clicked)
+    load_csv_button.on_click(on_load_csv_clicked)
+
+    # 初始化时刷新CSV列表
+    refresh_csv_list()
 
     # 组装界面
-    header = widgets.HTML("<h3>📊 步骤2: 数据抓取</h3>")
+    header = widgets.HTML("<h3>📊 步骤2: 数据抓取与加载</h3>")
+
+    fetch_section = widgets.VBox([
+        widgets.HTML("<h4>📥 方式1: 在线抓取数据</h4>"),
+        widgets.HBox([target_market, start_date, end_date]),
+        widgets.HBox([interval, batch_size, delay]),
+        fetch_button
+    ])
+
+    load_section = widgets.VBox([
+        widgets.HTML("<h4>📂 方式2: 加载已保存数据</h4>"),
+        widgets.HBox([load_csv_dropdown, refresh_csv_button]),
+        load_csv_button
+    ])
 
     return widgets.VBox([
         header,
-        widgets.HBox([target_market, start_date, end_date]),
-        widgets.HBox([interval, batch_size, delay]),
-        fetch_button,
+        fetch_section,
+        widgets.HTML("<hr>"),
+        load_section,
         output_status,
         output_table
     ])
