@@ -7,22 +7,26 @@
 # 一键启动 Panel UI - 完整版本
 # ============================================================
 
-# 第1步: 安装依赖
+# 第1步: 安装依赖 (包括Colab必需的jupyter_bokeh)
 print("📦 安装依赖中...")
-!pip install panel plotly -q 2>&1 | grep -v "already satisfied" || true
+!pip install panel plotly jupyter_bokeh -q 2>&1 | grep -v "already satisfied" || true
 
 # 第2步: 克隆项目
 print("\n📥 克隆项目中...")
 import os
 if not os.path.exists('Quant-Stock-Transformer'):
     !git clone https://github.com/FTF1990/Quant-Stock-Transformer.git
-os.chdir('Quant-Stock-Transformer')
 
-# 第3步: 安装项目依赖
+# 第3步: 切换到项目目录
+print("\n📂 切换到项目目录...")
+os.chdir('/content/Quant-Stock-Transformer')
+print(f"✅ 当前目录: {os.getcwd()}")
+
+# 第4步: 安装项目依赖
 print("\n📦 安装项目依赖中...")
 !pip install -r requirements.txt -q 2>&1 | grep -v "already satisfied" || true
 
-# 第4步: 启动Panel UI
+# 第5步: 启动Panel UI
 print("\n🚀 启动Panel UI...")
 print("="*80)
 
@@ -147,7 +151,7 @@ dashboard
 
 ```python
 %cd /content/Quant-Stock-Transformer
-!pip install panel plotly -q
+!pip install panel plotly jupyter_bokeh -q
 from panel_pipeline_ui import dashboard; import panel as pn; pn.extension('plotly', 'tabulator'); dashboard
 ```
 

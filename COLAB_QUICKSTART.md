@@ -8,7 +8,7 @@
 
 ### Cell 1: 安装依赖
 ```python
-!pip install panel plotly -q
+!pip install panel plotly jupyter_bokeh -q
 print("✅ Panel安装完成!")
 ```
 
@@ -74,6 +74,8 @@ UI启动后,按照以下顺序使用:
 
 ```python
 # 简化版 - 只启动UI查看界面
+# 确保先安装: !pip install panel plotly jupyter_bokeh -q
+
 import panel as pn
 pn.extension('plotly', 'tabulator')
 
@@ -261,7 +263,7 @@ gc.collect()
 # ============================================================
 # Cell 1: 环境设置
 # ============================================================
-!pip install panel plotly -q
+!pip install panel plotly jupyter_bokeh -q
 
 # ============================================================
 # Cell 2: 克隆项目
