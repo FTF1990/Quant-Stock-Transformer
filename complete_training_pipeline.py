@@ -195,17 +195,32 @@ class StockDataFetcher:
 
         try:
             if market == "CN":
-                df = ak.stock_zh_index_daily(symbol=f"sh{symbol}")
-                df['date'] = pd.to_datetime(df['date'])
-                df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
-                df = df.rename(columns={'close': 'Close', 'open': 'Open',
-                                       'high': 'High', 'low': 'Low', 'volume': 'Volume'})
-                df = df.set_index('date')
+                # 方法1: 尝试使用akshare
+                try:
+                    df = ak.stock_zh_index_daily(symbol=f"sh{symbol}")
+                    df['date'] = pd.to_datetime(df['date'])
+                    df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+                    df = df.rename(columns={'close': 'Close', 'open': 'Open',
+                                           'high': 'High', 'low': 'Low', 'volume': 'Volume'})
+                    df = df.set_index('date')
+                    return df
+                except Exception as ak_error:
+                    # 方法2: akshare失败时，使用yfinance备选方案
+                    print(f"  ⚠️  akshare失败，切换到yfinance获取指数...")
+                    # 使用上证指数的yfinance符号
+                    yahoo_index_symbol = "000001.SS"
+                    df = yf.download(yahoo_index_symbol, start=start_date, end=end_date,
+                                    interval=interval, progress=False)
+                    if len(df) == 0:
+                        # 如果上证指数失败，尝试使用^SSEC
+                        df = yf.download("^SSEC", start=start_date, end=end_date,
+                                        interval=interval, progress=False)
+                    return df
             else:
                 df = yf.download(symbol, start=start_date, end=end_date,
                                 interval=interval, progress=False)
+                return df
 
-            return df
         except Exception as e:
             print(f"    警告: 大盘指数获取失败 ({e})")
             return None
@@ -217,15 +232,40 @@ class StockDataFetcher:
 
         try:
             if market == "CN":
-                df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
-                                       start_date=start_date.replace('-', ''),
-                                       end_date=end_date.replace('-', ''))
-                df['日期'] = pd.to_datetime(df['日期'])
-                df = df.rename(columns={
-                    '日期': 'Date', '收盘': 'Close', '开盘': 'Open',
-                    '最高': 'High', '最低': 'Low', '成交量': 'Volume'
-                })
-                df = df.set_index('Date')
+                # 方法1: 尝试使用akshare（国内数据更准确）
+                try:
+                    df = ak.stock_zh_a_hist(symbol=symbol, period="daily",
+                                           start_date=start_date.replace('-', ''),
+                                           end_date=end_date.replace('-', ''))
+                    df['日期'] = pd.to_datetime(df['日期'])
+                    df = df.rename(columns={
+                        '日期': 'Date', '收盘': 'Close', '开盘': 'Open',
+                        '最高': 'High', '最低': 'Low', '成交量': 'Volume'
+                    })
+                    df = df.set_index('Date')
+                    return df
+                except Exception as ak_error:
+                    # 方法2: akshare失败时，使用yfinance备选方案（添加交易所后缀）
+                    print(f"      ⚠️  akshare失败，切换到yfinance...")
+
+                    # 添加交易所后缀
+                    if symbol.startswith('6'):
+                        yahoo_symbol = f"{symbol}.SS"  # 上海交易所
+                    elif symbol.startswith('0') or symbol.startswith('3'):
+                        yahoo_symbol = f"{symbol}.SZ"  # 深圳交易所
+                    else:
+                        yahoo_symbol = symbol
+
+                    df = yf.download(yahoo_symbol, start=start_date, end=end_date,
+                                    interval=interval, progress=False)
+
+                    if len(df) > 0:
+                        # yfinance返回的列名已经是英文，可能需要重置索引
+                        if df.index.name != 'Date':
+                            df.index.name = 'Date'
+                        return df
+                    else:
+                        raise Exception(f"yfinance也未返回数据")
             else:
                 if market == "HK" and not symbol.endswith(".HK"):
                     symbol = symbol.zfill(4) + ".HK"

@@ -1,5 +1,5 @@
 """
-Gradio可视化训练Pipeline UI
+Panel可视化训练Pipeline UI (Colab优化版)
 ====================================
 
 功能：
@@ -10,13 +10,13 @@ Gradio可视化训练Pipeline UI
 - 性能对比图表
 
 使用方法：
-    python gradio_pipeline_ui.py
+    在Colab中直接运行此文件
 
 作者：Quant-Stock-Transformer Team
-版本：1.0.0
+版本：2.0.0 (Panel版)
 """
 
-import gradio as gr
+import panel as pn
 import json
 import pickle
 import pandas as pd
@@ -29,6 +29,8 @@ from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 from typing import Dict, Tuple, Optional
+import io
+from IPython.display import display, clear_output
 
 # 导入pipeline模块
 from complete_training_pipeline import (
@@ -43,6 +45,9 @@ from complete_training_pipeline import (
     TemporalDataset
 )
 from torch.utils.data import DataLoader
+
+# 初始化Panel
+pn.extension('plotly', 'tabulator', sizing_mode="stretch_width")
 
 # 设置绘图样式
 plt.style.use('seaborn-v0_8-darkgrid')
@@ -71,16 +76,16 @@ state = PipelineState()
 # 步骤1：加载股票JSON
 # ============================================================================
 
-def load_stocks_json(json_file):
+def load_stocks_json(event):
     """加载并显示股票列表"""
     try:
+        json_file = file_input.value
         if json_file is None:
-            return "❌ 请上传JSON文件", None, None
+            step1_status.object = "❌ 请上传JSON文件"
+            return
 
         # 读取JSON
-        with open(json_file.name, 'r', encoding='utf-8') as f:
-            stocks_json = json.load(f)
-
+        stocks_json = json.loads(json_file.decode('utf-8'))
         state.stocks_json = stocks_json
 
         # 生成统计信息
@@ -96,6 +101,8 @@ def load_stocks_json(json_file):
         for market, stocks in stocks_json.items():
             stats_text += f"- **{market}市场**: {len(stocks)}只\n"
 
+        step1_status.object = stats_text
+
         # 生成详细表格
         rows = []
         for market, stocks in stocks_json.items():
@@ -109,6 +116,7 @@ def load_stocks_json(json_file):
                 })
 
         df = pd.DataFrame(rows)
+        stocks_table.value = df
 
         # 生成市场分布饼图
         market_counts = {market: len(stocks) for market, stocks in stocks_json.items()}
@@ -117,59 +125,47 @@ def load_stocks_json(json_file):
             names=list(market_counts.keys()),
             title='股票市场分布'
         )
-
-        return stats_text, df, fig
+        market_chart.object = fig
 
     except Exception as e:
-        return f"❌ 加载失败: {str(e)}", None, None
+        step1_status.object = f"❌ 加载失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤2：数据抓取
 # ============================================================================
 
-def fetch_historical_data(
-    target_market,
-    start_date,
-    end_date,
-    batch_size,
-    delay_between_batches,
-    progress=gr.Progress()
-):
+def fetch_historical_data(event):
     """抓取历史数据"""
     try:
         if state.stocks_json is None:
-            return "❌ 请先加载股票JSON", None
+            step2_status.object = "❌ 请先加载股票JSON"
+            return
 
-        progress(0, desc="初始化数据抓取...")
+        step2_status.object = "⏳ 正在抓取数据..."
 
         fetcher = StockDataFetcher()
 
         # 抓取数据
-        progress(0.2, desc="开始抓取数据...")
         historical_data = fetcher.fetch_historical_data(
             stocks_json=state.stocks_json,
-            start_date=start_date,
-            end_date=end_date,
+            start_date=start_date_input.value,
+            end_date=end_date_input.value,
             interval="1d",
             include_market_index=True,
-            batch_size=int(batch_size),
-            delay_between_batches=float(delay_between_batches)
+            batch_size=int(batch_size_input.value),
+            delay_between_batches=float(delay_input.value)
         )
 
         state.historical_data = historical_data
-
-        progress(0.8, desc="保存数据...")
         fetcher.save_data("historical_data.pkl")
-
-        progress(1.0, desc="完成！")
 
         # 生成统计信息
         stats_text = f"""
 ## ✅ 数据抓取完成
 
-**日期范围**: {start_date} 至 {end_date}
-**目标市场**: {target_market}
+**日期范围**: {start_date_input.value} 至 {end_date_input.value}
+**目标市场**: {target_market_input.value}
 
 **数据统计**:
 """
@@ -186,42 +182,43 @@ def fetch_historical_data(
                 })
 
         df_stats = pd.DataFrame(rows)
+        fetch_table.value = df_stats
 
         # 检查目标市场的数据
+        target_market = target_market_input.value
         if target_market in historical_data:
             market_data = historical_data[target_market]
             stats_text += f"\n**{target_market}市场**: 成功获取{len(market_data)}支股票数据\n"
         else:
             stats_text += f"\n⚠️ **{target_market}市场数据未找到**\n"
 
-        return stats_text, df_stats
+        step2_status.object = stats_text
 
     except Exception as e:
-        return f"❌ 数据抓取失败: {str(e)}", None
+        step2_status.object = f"❌ 数据抓取失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤3：数据预处理
 # ============================================================================
 
-def preprocess_data(target_market, target_stock, progress=gr.Progress()):
+def preprocess_data(event):
     """数据预处理"""
     try:
         if state.historical_data is None:
-            return "❌ 请先抓取历史数据", None, None
+            step3_status.object = "❌ 请先抓取历史数据"
+            return
 
-        progress(0, desc="开始数据预处理...")
+        step3_status.object = "⏳ 正在预处理数据..."
 
         processor = StockDataProcessor(
             historical_data=state.historical_data,
-            target_market=target_market,
-            target_stock=target_stock
+            target_market=target_market_input.value,
+            target_stock=target_stock_input.value
         )
 
-        progress(0.3, desc="计算特征...")
         X, y_T, y_T1, dates = processor.prepare_training_data()
 
-        progress(0.6, desc="数据集划分...")
         # 数据集划分
         train_size = int(0.7 * len(X))
         val_size = int(0.15 * len(X))
@@ -247,13 +244,11 @@ def preprocess_data(target_market, target_stock, progress=gr.Progress()):
             'processor': processor
         }
 
-        progress(1.0, desc="完成！")
-
         # 生成统计信息
         stats_text = f"""
 ## ✅ 数据预处理完成
 
-**目标股票**: {target_market} - {target_stock}
+**目标股票**: {target_market_input.value} - {target_stock_input.value}
 
 **数据集划分**:
 - 训练集: {len(X_train)} 样本 (70%)
@@ -266,6 +261,8 @@ def preprocess_data(target_market, target_stock, progress=gr.Progress()):
 - T日收益率: {y_T.shape}
 - T+1日收益率: {y_T1.shape}
 """
+
+        step3_status.object = stats_text
 
         # 绘制收益率分布
         fig, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -284,23 +281,25 @@ def preprocess_data(target_market, target_stock, progress=gr.Progress()):
 
         plt.tight_layout()
 
-        return stats_text, fig, None
+        preprocess_plot.object = fig
+        plt.close(fig)
 
     except Exception as e:
-        return f"❌ 预处理失败: {str(e)}", None, None
+        step3_status.object = f"❌ 预处理失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤4：SST模型训练
 # ============================================================================
 
-def train_sst_model(epochs, batch_size, learning_rate, progress=gr.Progress()):
+def train_sst_model(event):
     """训练SST模型"""
     try:
         if state.processed_data is None:
-            return "❌ 请先完成数据预处理", None
+            step4_status.object = "❌ 请先完成数据预处理"
+            return
 
-        progress(0, desc="初始化SST模型...")
+        step4_status.object = "⏳ 正在训练SST模型..."
 
         # 获取数据
         data = state.processed_data
@@ -323,20 +322,16 @@ def train_sst_model(epochs, batch_size, learning_rate, progress=gr.Progress()):
         if state.trainer is None:
             state.trainer = ModelTrainer(device=state.device)
 
-        progress(0.1, desc="开始训练...")
-
         # 训练
         history = state.trainer.train_sst(
             sst_model,
             data['X_train'], data['y_T_train'], data['y_T1_train'],
             data['X_val'], data['y_T_val'], data['y_T1_val'],
-            epochs=int(epochs),
-            batch_size=int(batch_size),
-            lr=float(learning_rate),
+            epochs=int(sst_epochs_input.value),
+            batch_size=int(sst_batch_size_input.value),
+            lr=float(sst_lr_input.value),
             verbose=False
         )
-
-        progress(1.0, desc="训练完成！")
 
         # 生成统计信息
         best_val_loss = min(history['val_loss'])
@@ -348,14 +343,16 @@ def train_sst_model(epochs, batch_size, learning_rate, progress=gr.Progress()):
 **模型参数**: {sum(p.numel() for p in sst_model.parameters()):,}
 
 **训练配置**:
-- Epochs: {epochs}
-- Batch Size: {batch_size}
-- Learning Rate: {learning_rate}
+- Epochs: {sst_epochs_input.value}
+- Batch Size: {sst_batch_size_input.value}
+- Learning Rate: {sst_lr_input.value}
 
 **训练结果**:
 - 最佳验证损失: {best_val_loss:.6f}
 - 最终训练损失: {final_train_loss:.6f}
 """
+
+        step4_status.object = stats_text
 
         # 绘制训练曲线
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -382,23 +379,25 @@ def train_sst_model(epochs, batch_size, learning_rate, progress=gr.Progress()):
 
         plt.tight_layout()
 
-        return stats_text, fig
+        sst_plot.object = fig
+        plt.close(fig)
 
     except Exception as e:
-        return f"❌ SST训练失败: {str(e)}", None
+        step4_status.object = f"❌ SST训练失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤5：特征提取
 # ============================================================================
 
-def extract_features(progress=gr.Progress()):
+def extract_features(event):
     """提取SST内部特征"""
     try:
         if state.sst_model is None:
-            return "❌ 请先训练SST模型", None
+            step5_status.object = "❌ 请先训练SST模型"
+            return
 
-        progress(0, desc="开始特征提取...")
+        step5_status.object = "⏳ 正在提取特征..."
 
         data = state.processed_data
 
@@ -406,8 +405,6 @@ def extract_features(progress=gr.Progress()):
         X_all = np.vstack([data['X_train'], data['X_val'], data['X_test']])
         y_T_all = np.vstack([data['y_T_train'], data['y_T_val'], data['y_T_test']])
         y_T1_all = np.vstack([data['y_T1_train'], data['y_T1_val'], data['y_T1_test']])
-
-        progress(0.3, desc="提取特征...")
 
         # 提取特征
         state.sst_model.eval()
@@ -426,15 +423,11 @@ def extract_features(progress=gr.Progress()):
             residual_T = y_T_all - pred_T.cpu().numpy()
             residual_T1 = y_T1_all - pred_T1.cpu().numpy()
 
-        progress(0.7, desc="准备时序数据...")
-
         # 保存特征
         state.processed_data['encoder_output'] = encoder_output
         state.processed_data['pooled_features'] = pooled_features
         state.processed_data['residual_T'] = residual_T
         state.processed_data['residual_T1'] = residual_T1
-
-        progress(1.0, desc="完成！")
 
         # 生成统计信息
         stats_text = f"""
@@ -450,6 +443,8 @@ def extract_features(progress=gr.Progress()):
 - 池化特征均值: {np.mean(pooled_features):.6f}
 - 池化特征标准差: {np.std(pooled_features):.6f}
 """
+
+        step5_status.object = stats_text
 
         # 绘制特征可视化
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -486,30 +481,26 @@ def extract_features(progress=gr.Progress()):
 
         plt.tight_layout()
 
-        return stats_text, fig
+        extract_plot.object = fig
+        plt.close(fig)
 
     except Exception as e:
-        return f"❌ 特征提取失败: {str(e)}", None
+        step5_status.object = f"❌ 特征提取失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤6：时序模型训练
 # ============================================================================
 
-def train_temporal_models(
-    model_type,
-    epochs,
-    batch_size,
-    learning_rate,
-    seq_len,
-    progress=gr.Progress()
-):
+def train_temporal_models(event):
     """训练时序模型"""
     try:
         if 'pooled_features' not in state.processed_data:
-            return "❌ 请先提取特征", None
+            step6_status.object = "❌ 请先提取特征"
+            return
 
-        progress(0, desc=f"初始化{model_type}模型...")
+        model_type = temporal_model_type_input.value
+        step6_status.object = f"⏳ 正在训练{model_type}模型..."
 
         data = state.processed_data
 
@@ -527,24 +518,24 @@ def train_temporal_models(
         relationship_features = torch.FloatTensor(pooled_features)
         targets = torch.FloatTensor(y_T1_all)
 
+        seq_len = int(temporal_seq_len_input.value)
+
         train_dataset = TemporalDataset(
             target_stock_features=target_stock_features[:train_size],
             relationship_features=relationship_features[:train_size],
             targets=targets[:train_size],
-            seq_len=int(seq_len)
+            seq_len=seq_len
         )
 
         val_dataset = TemporalDataset(
             target_stock_features=target_stock_features[train_size:train_size+val_size],
             relationship_features=relationship_features[train_size:train_size+val_size],
             targets=targets[train_size:train_size+val_size],
-            seq_len=int(seq_len)
+            seq_len=seq_len
         )
 
-        train_loader = DataLoader(train_dataset, batch_size=int(batch_size), shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=int(batch_size), shuffle=False)
-
-        progress(0.1, desc="创建模型...")
+        train_loader = DataLoader(train_dataset, batch_size=int(temporal_batch_size_input.value), shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=int(temporal_batch_size_input.value), shuffle=False)
 
         # 创建模型
         input_dim = X_all.shape[1] + pooled_features.shape[1]
@@ -576,9 +567,8 @@ def train_temporal_models(
             ).to(state.device)
             state.tcn_model = model
         else:
-            return f"❌ 未知的模型类型: {model_type}", None
-
-        progress(0.2, desc="开始训练...")
+            step6_status.object = f"❌ 未知的模型类型: {model_type}"
+            return
 
         # 训练
         if state.trainer is None:
@@ -588,13 +578,11 @@ def train_temporal_models(
             model,
             train_loader,
             val_loader,
-            epochs=int(epochs),
-            lr=float(learning_rate),
+            epochs=int(temporal_epochs_input.value),
+            lr=float(temporal_lr_input.value),
             model_name=model_type,
             verbose=False
         )
-
-        progress(1.0, desc="训练完成！")
 
         # 生成统计信息
         best_val_loss = min(history['val_loss'])
@@ -606,9 +594,9 @@ def train_temporal_models(
 **模型参数**: {sum(p.numel() for p in model.parameters()):,}
 
 **训练配置**:
-- Epochs: {epochs}
-- Batch Size: {batch_size}
-- Learning Rate: {learning_rate}
+- Epochs: {temporal_epochs_input.value}
+- Batch Size: {temporal_batch_size_input.value}
+- Learning Rate: {temporal_lr_input.value}
 - Sequence Length: {seq_len}
 
 **训练结果**:
@@ -619,6 +607,8 @@ def train_temporal_models(
 - 训练样本: {len(train_dataset)}
 - 验证样本: {len(val_dataset)}
 """
+
+        step6_status.object = stats_text
 
         # 绘制训练曲线
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -633,23 +623,25 @@ def train_temporal_models(
 
         plt.tight_layout()
 
-        return stats_text, fig
+        temporal_plot.object = fig
+        plt.close(fig)
 
     except Exception as e:
-        return f"❌ {model_type}训练失败: {str(e)}", None
+        step6_status.object = f"❌ {model_type}训练失败: {str(e)}"
 
 
 # ============================================================================
 # 步骤7：模型评估
 # ============================================================================
 
-def evaluate_all_models(seq_len, progress=gr.Progress()):
+def evaluate_all_models(event):
     """评估所有模型"""
     try:
         if state.sst_model is None:
-            return "❌ 请先训练模型", None, None
+            step7_status.object = "❌ 请先训练模型"
+            return
 
-        progress(0, desc="初始化评估...")
+        step7_status.object = "⏳ 正在评估模型..."
 
         # 创建评估器
         if state.evaluator is None:
@@ -658,7 +650,6 @@ def evaluate_all_models(seq_len, progress=gr.Progress()):
         data = state.processed_data
 
         # 评估SST
-        progress(0.2, desc="评估SST模型...")
         sst_metrics = state.evaluator.evaluate_sst(
             state.sst_model,
             data['X_test'],
@@ -679,40 +670,35 @@ def evaluate_all_models(seq_len, progress=gr.Progress()):
         relationship_features = torch.FloatTensor(pooled_features)
         targets = torch.FloatTensor(y_T1_all)
 
+        seq_len = int(eval_seq_len_input.value)
+
         test_dataset = TemporalDataset(
             target_stock_features=target_stock_features[train_size+val_size:],
             relationship_features=relationship_features[train_size+val_size:],
             targets=targets[train_size+val_size:],
-            seq_len=int(seq_len)
+            seq_len=seq_len
         )
 
         test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
         # 评估时序模型
         if state.lstm_model is not None:
-            progress(0.4, desc="评估LSTM模型...")
             lstm_metrics = state.evaluator.evaluate_temporal_model(
                 state.lstm_model, test_loader, model_name='LSTM'
             )
 
         if state.gru_model is not None:
-            progress(0.6, desc="评估GRU模型...")
             gru_metrics = state.evaluator.evaluate_temporal_model(
                 state.gru_model, test_loader, model_name='GRU'
             )
 
         if state.tcn_model is not None:
-            progress(0.8, desc="评估TCN模型...")
             tcn_metrics = state.evaluator.evaluate_temporal_model(
                 state.tcn_model, test_loader, model_name='TCN'
             )
 
-        progress(0.9, desc="生成对比...")
-
         # 生成对比
         comparison_df = state.evaluator.compare_models()
-
-        progress(1.0, desc="完成！")
 
         # 生成统计文本
         stats_text = """
@@ -724,6 +710,9 @@ def evaluate_all_models(seq_len, progress=gr.Progress()):
             stats_text += f"- {model_name}\n"
 
         stats_text += "\n详细指标请查看下方对比表格和图表。"
+
+        step7_status.object = stats_text
+        eval_table.value = comparison_df
 
         # 生成对比图表
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -767,315 +756,151 @@ def evaluate_all_models(seq_len, progress=gr.Progress()):
 
         plt.tight_layout()
 
-        return stats_text, comparison_df, fig
+        eval_plot.object = fig
+        plt.close(fig)
 
     except Exception as e:
-        return f"❌ 评估失败: {str(e)}", None, None
+        step7_status.object = f"❌ 评估失败: {str(e)}"
 
 
 # ============================================================================
-# Gradio界面
+# 创建UI组件
 # ============================================================================
 
-def create_ui():
-    """创建Gradio UI"""
+# 步骤1组件
+file_input = pn.widgets.FileInput(accept='.json', name='上传JSON文件')
+load_btn = pn.widgets.Button(name='📥 加载股票列表', button_type='primary')
+step1_status = pn.pane.Markdown("等待上传JSON文件...")
+stocks_table = pn.widgets.Tabulator(pd.DataFrame(), width=800, height=300)
+market_chart = pn.pane.Plotly()
 
-    with gr.Blocks(title="股票预测Pipeline可视化", theme=gr.themes.Soft()) as demo:
-        gr.Markdown("""
-# 🚀 股票预测模型训练Pipeline
+load_btn.on_click(load_stocks_json)
 
-完整的端到端训练流程可视化界面
+step1 = pn.Column(
+    "## 📋 步骤1: 加载股票JSON",
+    pn.Row(file_input, load_btn),
+    step1_status,
+    stocks_table,
+    market_chart
+)
 
-**功能**:
-- ✅ 选股JSON导入
-- ✅ 历史数据获取
-- ✅ 数据预处理
-- ✅ SST模型训练
-- ✅ 特征提取
-- ✅ 时序模型训练（LSTM/GRU/TCN）
-- ✅ 模型评估对比
+# 步骤2组件
+target_market_input = pn.widgets.Select(name='目标市场', options=['US', 'CN', 'HK', 'JP'], value='CN')
+start_date_input = pn.widgets.TextInput(name='开始日期', value='2020-01-01')
+end_date_input = pn.widgets.TextInput(name='结束日期', value='2024-12-31')
+batch_size_input = pn.widgets.IntSlider(name='批量大小', start=1, end=10, value=5)
+delay_input = pn.widgets.FloatSlider(name='批次间延迟(秒)', start=0.5, end=5.0, value=2.0, step=0.5)
+fetch_btn = pn.widgets.Button(name='📥 开始抓取数据', button_type='primary')
+step2_status = pn.pane.Markdown("等待开始数据抓取...")
+fetch_table = pn.widgets.Tabulator(pd.DataFrame(), width=800, height=300)
 
----
-        """)
+fetch_btn.on_click(fetch_historical_data)
 
-        # ========================================================================
-        # 步骤1：加载JSON
-        # ========================================================================
+step2 = pn.Column(
+    "## 📊 步骤2: 数据抓取",
+    pn.Row(
+        pn.Column(target_market_input, start_date_input, end_date_input),
+        pn.Column(batch_size_input, delay_input)
+    ),
+    fetch_btn,
+    step2_status,
+    fetch_table
+)
 
-        with gr.Tab("📋 步骤1: 加载股票JSON"):
-            gr.Markdown("### 上传你的股票选择JSON文件")
+# 步骤3组件
+target_stock_input = pn.widgets.TextInput(name='目标股票代码', value='600519')
+preprocess_btn = pn.widgets.Button(name='🔄 开始预处理', button_type='primary')
+step3_status = pn.pane.Markdown("等待开始预处理...")
+preprocess_plot = pn.pane.Matplotlib()
 
-            with gr.Row():
-                json_file = gr.File(
-                    label="上传JSON文件",
-                    file_types=[".json"],
-                    type="filepath"
-                )
+preprocess_btn.on_click(preprocess_data)
 
-            load_btn = gr.Button("📥 加载股票列表", variant="primary", size="lg")
+step3 = pn.Column(
+    "## 🔄 步骤3: 数据预处理",
+    target_stock_input,
+    preprocess_btn,
+    step3_status,
+    preprocess_plot
+)
 
-            with gr.Row():
-                json_stats = gr.Markdown()
+# 步骤4组件
+sst_epochs_input = pn.widgets.IntSlider(name='训练轮数', start=10, end=200, value=50, step=10)
+sst_batch_size_input = pn.widgets.IntSlider(name='批量大小', start=8, end=128, value=32, step=8)
+sst_lr_input = pn.widgets.FloatInput(name='学习率', value=0.001, step=0.0001)
+sst_train_btn = pn.widgets.Button(name='🚀 开始训练SST', button_type='primary')
+step4_status = pn.pane.Markdown("等待开始训练...")
+sst_plot = pn.pane.Matplotlib()
 
-            with gr.Row():
-                stocks_table = gr.DataFrame(label="股票详细列表")
+sst_train_btn.on_click(train_sst_model)
 
-            with gr.Row():
-                market_chart = gr.Plot(label="市场分布")
+step4 = pn.Column(
+    "## 🧠 步骤4: SST模型训练",
+    pn.Row(
+        pn.Column(sst_epochs_input, sst_batch_size_input),
+        pn.Column(sst_lr_input)
+    ),
+    sst_train_btn,
+    step4_status,
+    sst_plot
+)
 
-            load_btn.click(
-                fn=load_stocks_json,
-                inputs=[json_file],
-                outputs=[json_stats, stocks_table, market_chart]
-            )
+# 步骤5组件
+extract_btn = pn.widgets.Button(name='🔍 开始特征提取', button_type='primary')
+step5_status = pn.pane.Markdown("等待开始特征提取...")
+extract_plot = pn.pane.Matplotlib()
 
-        # ========================================================================
-        # 步骤2：数据抓取
-        # ========================================================================
+extract_btn.on_click(extract_features)
 
-        with gr.Tab("📊 步骤2: 数据抓取"):
-            gr.Markdown("### 抓取历史股票数据")
+step5 = pn.Column(
+    "## 🔍 步骤5: 特征提取",
+    extract_btn,
+    step5_status,
+    extract_plot
+)
 
-            with gr.Row():
-                with gr.Column():
-                    target_market = gr.Dropdown(
-                        choices=['US', 'CN', 'HK', 'JP'],
-                        value='CN',
-                        label="目标市场"
-                    )
-                    start_date = gr.Textbox(
-                        value="2020-01-01",
-                        label="开始日期 (YYYY-MM-DD)"
-                    )
-                    end_date = gr.Textbox(
-                        value="2024-12-31",
-                        label="结束日期 (YYYY-MM-DD)"
-                    )
+# 步骤6组件
+temporal_model_type_input = pn.widgets.Select(name='模型类型', options=['LSTM', 'GRU', 'TCN'], value='LSTM')
+temporal_epochs_input = pn.widgets.IntSlider(name='训练轮数', start=10, end=200, value=100, step=10)
+temporal_batch_size_input = pn.widgets.IntSlider(name='批量大小', start=8, end=128, value=32, step=8)
+temporal_lr_input = pn.widgets.FloatInput(name='学习率', value=0.001, step=0.0001)
+temporal_seq_len_input = pn.widgets.IntSlider(name='序列长度', start=20, end=120, value=60, step=10)
+temporal_train_btn = pn.widgets.Button(name='🚀 开始训练时序模型', button_type='primary')
+step6_status = pn.pane.Markdown("等待开始训练...")
+temporal_plot = pn.pane.Matplotlib()
 
-                with gr.Column():
-                    batch_size = gr.Slider(
-                        minimum=1,
-                        maximum=10,
-                        value=5,
-                        step=1,
-                        label="批量大小"
-                    )
-                    delay_between_batches = gr.Slider(
-                        minimum=0.5,
-                        maximum=5.0,
-                        value=2.0,
-                        step=0.5,
-                        label="批次间延迟（秒）"
-                    )
+temporal_train_btn.on_click(train_temporal_models)
 
-            fetch_btn = gr.Button("📥 开始抓取数据", variant="primary", size="lg")
+step6 = pn.Column(
+    "## ⏰ 步骤6: 时序模型训练",
+    pn.Row(
+        pn.Column(temporal_model_type_input, temporal_epochs_input, temporal_batch_size_input),
+        pn.Column(temporal_lr_input, temporal_seq_len_input)
+    ),
+    temporal_train_btn,
+    step6_status,
+    temporal_plot
+)
 
-            with gr.Row():
-                fetch_stats = gr.Markdown()
+# 步骤7组件
+eval_seq_len_input = pn.widgets.IntSlider(name='序列长度（需与训练时一致）', start=20, end=120, value=60, step=10)
+eval_btn = pn.widgets.Button(name='📊 开始评估', button_type='primary')
+step7_status = pn.pane.Markdown("等待开始评估...")
+eval_table = pn.widgets.Tabulator(pd.DataFrame(), width=800, height=300)
+eval_plot = pn.pane.Matplotlib()
 
-            with gr.Row():
-                fetch_table = gr.DataFrame(label="数据抓取统计")
+eval_btn.on_click(evaluate_all_models)
 
-            fetch_btn.click(
-                fn=fetch_historical_data,
-                inputs=[target_market, start_date, end_date, batch_size, delay_between_batches],
-                outputs=[fetch_stats, fetch_table]
-            )
+step7 = pn.Column(
+    "## 📈 步骤7: 模型评估",
+    eval_seq_len_input,
+    eval_btn,
+    step7_status,
+    eval_table,
+    eval_plot
+)
 
-        # ========================================================================
-        # 步骤3：数据预处理
-        # ========================================================================
-
-        with gr.Tab("🔄 步骤3: 数据预处理"):
-            gr.Markdown("### 数据预处理和特征工程")
-
-            with gr.Row():
-                target_stock = gr.Textbox(
-                    value="600519",
-                    label="目标股票代码"
-                )
-
-            preprocess_btn = gr.Button("🔄 开始预处理", variant="primary", size="lg")
-
-            with gr.Row():
-                preprocess_stats = gr.Markdown()
-
-            with gr.Row():
-                preprocess_plot = gr.Plot(label="收益率分布")
-
-            preprocess_btn.click(
-                fn=preprocess_data,
-                inputs=[target_market, target_stock],
-                outputs=[preprocess_stats, preprocess_plot, gr.State()]
-            )
-
-        # ========================================================================
-        # 步骤4：SST训练
-        # ========================================================================
-
-        with gr.Tab("🧠 步骤4: SST模型训练"):
-            gr.Markdown("### 训练双输出SST模型")
-
-            with gr.Row():
-                with gr.Column():
-                    sst_epochs = gr.Slider(
-                        minimum=10,
-                        maximum=200,
-                        value=50,
-                        step=10,
-                        label="训练轮数"
-                    )
-                    sst_batch_size = gr.Slider(
-                        minimum=8,
-                        maximum=128,
-                        value=32,
-                        step=8,
-                        label="批量大小"
-                    )
-
-                with gr.Column():
-                    sst_lr = gr.Slider(
-                        minimum=0.0001,
-                        maximum=0.01,
-                        value=0.001,
-                        step=0.0001,
-                        label="学习率"
-                    )
-
-            sst_train_btn = gr.Button("🚀 开始训练SST", variant="primary", size="lg")
-
-            with gr.Row():
-                sst_stats = gr.Markdown()
-
-            with gr.Row():
-                sst_plot = gr.Plot(label="训练曲线")
-
-            sst_train_btn.click(
-                fn=train_sst_model,
-                inputs=[sst_epochs, sst_batch_size, sst_lr],
-                outputs=[sst_stats, sst_plot]
-            )
-
-        # ========================================================================
-        # 步骤5：特征提取
-        # ========================================================================
-
-        with gr.Tab("🔍 步骤5: 特征提取"):
-            gr.Markdown("### 提取SST内部特征")
-
-            extract_btn = gr.Button("🔍 开始特征提取", variant="primary", size="lg")
-
-            with gr.Row():
-                extract_stats = gr.Markdown()
-
-            with gr.Row():
-                extract_plot = gr.Plot(label="特征可视化")
-
-            extract_btn.click(
-                fn=extract_features,
-                inputs=[],
-                outputs=[extract_stats, extract_plot]
-            )
-
-        # ========================================================================
-        # 步骤6：时序模型训练
-        # ========================================================================
-
-        with gr.Tab("⏰ 步骤6: 时序模型训练"):
-            gr.Markdown("### 训练LSTM/GRU/TCN时序模型")
-
-            with gr.Row():
-                with gr.Column():
-                    temporal_model_type = gr.Dropdown(
-                        choices=['LSTM', 'GRU', 'TCN'],
-                        value='LSTM',
-                        label="模型类型"
-                    )
-                    temporal_epochs = gr.Slider(
-                        minimum=10,
-                        maximum=200,
-                        value=100,
-                        step=10,
-                        label="训练轮数"
-                    )
-                    temporal_batch_size = gr.Slider(
-                        minimum=8,
-                        maximum=128,
-                        value=32,
-                        step=8,
-                        label="批量大小"
-                    )
-
-                with gr.Column():
-                    temporal_lr = gr.Slider(
-                        minimum=0.0001,
-                        maximum=0.01,
-                        value=0.001,
-                        step=0.0001,
-                        label="学习率"
-                    )
-                    temporal_seq_len = gr.Slider(
-                        minimum=20,
-                        maximum=120,
-                        value=60,
-                        step=10,
-                        label="序列长度"
-                    )
-
-            temporal_train_btn = gr.Button("🚀 开始训练时序模型", variant="primary", size="lg")
-
-            with gr.Row():
-                temporal_stats = gr.Markdown()
-
-            with gr.Row():
-                temporal_plot = gr.Plot(label="训练曲线")
-
-            temporal_train_btn.click(
-                fn=train_temporal_models,
-                inputs=[temporal_model_type, temporal_epochs, temporal_batch_size,
-                        temporal_lr, temporal_seq_len],
-                outputs=[temporal_stats, temporal_plot]
-            )
-
-        # ========================================================================
-        # 步骤7：模型评估
-        # ========================================================================
-
-        with gr.Tab("📈 步骤7: 模型评估"):
-            gr.Markdown("### 评估所有模型并对比性能")
-
-            with gr.Row():
-                eval_seq_len = gr.Slider(
-                    minimum=20,
-                    maximum=120,
-                    value=60,
-                    step=10,
-                    label="序列长度（需与训练时一致）"
-                )
-
-            eval_btn = gr.Button("📊 开始评估", variant="primary", size="lg")
-
-            with gr.Row():
-                eval_stats = gr.Markdown()
-
-            with gr.Row():
-                eval_table = gr.DataFrame(label="模型性能对比表")
-
-            with gr.Row():
-                eval_plot = gr.Plot(label="性能对比图")
-
-            eval_btn.click(
-                fn=evaluate_all_models,
-                inputs=[eval_seq_len],
-                outputs=[eval_stats, eval_table, eval_plot]
-            )
-
-        # ========================================================================
-        # 使用说明
-        # ========================================================================
-
-        with gr.Tab("📖 使用说明"):
-            gr.Markdown("""
+# 使用说明
+usage_doc = pn.pane.Markdown("""
 ## 📖 使用流程
 
 ### 1️⃣ 加载股票JSON
@@ -1143,72 +968,101 @@ def create_ui():
 
 ---
 
-## 📞 帮助
+**Quant-Stock-Transformer Team** | Version 2.0.0 (Panel版)
+""")
 
-遇到问题？
-1. 检查JSON文件格式是否正确
-2. 确保网络连接正常（数据抓取需要）
-3. 查看终端错误信息
-4. 参考README.md文档
+# 创建Tabs
+tabs = pn.Tabs(
+    ('步骤1: 加载JSON', step1),
+    ('步骤2: 数据抓取', step2),
+    ('步骤3: 数据预处理', step3),
+    ('步骤4: SST训练', step4),
+    ('步骤5: 特征提取', step5),
+    ('步骤6: 时序模型训练', step6),
+    ('步骤7: 模型评估', step7),
+    ('使用说明', usage_doc)
+)
+
+# 创建主界面
+dashboard = pn.template.MaterialTemplate(
+    title='🚀 股票预测模型训练Pipeline (Panel版)',
+    sidebar=[
+        pn.pane.Markdown("""
+## 📊 Pipeline状态
+
+完整的端到端训练流程可视化界面
+
+**设备**: {}
+
+**功能**:
+- ✅ 选股JSON导入
+- ✅ 历史数据获取
+- ✅ 数据预处理
+- ✅ SST模型训练
+- ✅ 特征提取
+- ✅ 时序模型训练
+- ✅ 模型评估对比
 
 ---
 
-**Quant-Stock-Transformer Team** | Version 1.0.0
-            """)
-
-    return demo
+**提示**:
+1. 按照步骤顺序执行
+2. 每步完成后再进行下一步
+3. 可以随时切换Tab查看结果
+        """.format(state.device))
+    ],
+    main=[tabs]
+)
 
 
 # ============================================================================
-# 主函数
+# 启动函数
 # ============================================================================
 
-if __name__ == "__main__":
-    demo = create_ui()
+def launch():
+    """启动Panel应用"""
 
-    # Check if running in Colab
+    # 检测是否在Colab环境
     try:
         import google.colab
         IN_COLAB = True
-        print("✅ Colab环境确认")
     except:
         IN_COLAB = False
-        print("✅ 本地环境确认")
 
     print("="*80)
-    print("🚀 股票预测Pipeline可视化 - Gradio UI")
+    print("🚀 股票预测Pipeline可视化 - Panel UI")
+    print("="*80)
+    print(f"✅ 设备: {state.device}")
+    print(f"✅ 环境: {'Colab' if IN_COLAB else '本地'}")
+    print("✅ Panel已初始化")
     print("="*80)
 
     if IN_COLAB:
-        # Colab environment - use share=True for public URL
-        print("\n🌐 在Colab环境中启动Gradio...")
-        print("📝 注意: Gradio将生成一个公开访问链接")
-        demo.launch(
-            share=True,
-            debug=True,
-            show_error=True,
-            inline=False  # Use separate window
-        )
+        print("\n📱 Colab环境检测到!")
+        print("📝 提示: 运行返回的对象会在notebook中直接显示UI")
+        print("💡 使用方法:")
+        print("   app = launch()")
+        print("   app  # 在新cell中运行这行来显示UI\n")
+        print("="*80)
+
+    # 返回dashboard以便在Jupyter/Colab中显示
+    return dashboard
+
+
+if __name__ == "__main__":
+    # 检测环境
+    try:
+        import google.colab
+        IN_COLAB = True
+    except:
+        IN_COLAB = False
+
+    if IN_COLAB:
+        # Colab中直接显示，不启动服务器
+        print("🌐 在Colab中运行，请使用:")
+        print("   from panel_pipeline_ui import dashboard")
+        print("   dashboard")
     else:
-        # Local environment - try multiple ports
-        print("\n🌐 在本地环境中运行Gradio...")
-        for port in range(7860, 7870):
-            try:
-                print(f"尝试端口 {port}...")
-                demo.launch(
-                    server_name="127.0.0.1",
-                    server_port=port,
-                    share=False,
-                    debug=True,
-                    show_error=True,
-                    quiet=False
-                )
-                print(f"✅ 服务已启动!")
-                print(f"🔗 访问地址: http://localhost:{port}")
-                print("="*80)
-                break
-            except OSError:
-                print(f"❌ 端口 {port} 被占用,尝试下一个...")
-                continue
-        else:
-            print("❌ 所有端口都被占用! 请手动指定其他端口。")
+        # 本地环境启动服务器
+        print("🌐 在本地环境启动服务器...")
+        dashboard.show(port=5006)
