@@ -39,8 +39,9 @@ print("✅ UI已准备就绪!")
 print("📝 UI将在下方显示")
 print("="*80)
 
-# 显示UI - 这行必须是cell的最后一行!
-dashboard
+# 显示UI - 使用display()确保在Colab中正确显示
+from IPython.display import display
+display(dashboard)
 ```
 
 ---
@@ -142,7 +143,8 @@ import panel as pn
 pn.extension('plotly', 'tabulator', sizing_mode="stretch_width")
 
 from panel_pipeline_ui import dashboard
-dashboard
+from IPython.display import display
+display(dashboard)
 ```
 
 ---
@@ -152,7 +154,7 @@ dashboard
 ```python
 %cd /content/Quant-Stock-Transformer
 !pip install panel plotly jupyter_bokeh -q
-from panel_pipeline_ui import dashboard; import panel as pn; pn.extension('plotly', 'tabulator'); dashboard
+from panel_pipeline_ui import dashboard; import panel as pn; from IPython.display import display; pn.extension('plotly', 'tabulator'); display(dashboard)
 ```
 
 但建议使用第一个完整版本，因为它有更好的错误处理和提示信息。

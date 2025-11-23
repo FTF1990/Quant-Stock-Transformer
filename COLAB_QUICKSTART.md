@@ -47,10 +47,11 @@ print("🚀 正在启动Panel UI...")
 app = launch()
 
 # 直接显示UI (在notebook中内联渲染)
-app
+from IPython.display import display
+display(app)
 ```
 
-**重要**: 最后一行 `app` 会直接在notebook中显示UI界面，不会启动服务器！
+**重要**: 使用 `display(app)` 会在notebook中直接渲染UI界面，不会启动服务器！
 
 ---
 
@@ -81,8 +82,9 @@ pn.extension('plotly', 'tabulator')
 
 from panel_pipeline_ui import dashboard
 
-# 直接显示 (不需要.servable()，直接运行对象即可)
-dashboard
+# 直接显示 - 使用display()在Colab中渲染
+from IPython.display import display
+display(dashboard)
 ```
 
 ---
@@ -194,7 +196,8 @@ app.servable()  # 这会尝试启动服务器
 
 # ✅ 正确方式
 app = launch()
-app  # 直接运行对象，在notebook中内联显示
+from IPython.display import display
+display(app)  # 使用display()在Colab中显示
 ```
 
 或者使用最简单的方式：
@@ -204,7 +207,8 @@ import panel as pn
 pn.extension('plotly', 'tabulator')
 
 from panel_pipeline_ui import dashboard
-dashboard  # 直接显示，不启动服务器
+from IPython.display import display
+display(dashboard)  # 使用display()在Colab中显示
 ```
 
 ---
@@ -220,9 +224,10 @@ pn.extension('plotly', 'tabulator', sizing_mode="stretch_width")
 from IPython.display import clear_output
 clear_output()
 
-# 解决方案3: 确保在cell的最后一行返回对象
+# 解决方案3: 使用display()显式显示
 from panel_pipeline_ui import dashboard
-dashboard  # 必须是cell的最后一行，且没有分号
+from IPython.display import display
+display(dashboard)  # 使用display()确保正确显示
 
 # 解决方案4: 重启runtime
 # 菜单: Runtime → Restart runtime
@@ -296,8 +301,9 @@ app = launch()
 # ============================================================
 # Cell 6: 显示UI (在新cell中运行)
 # ============================================================
-# 直接运行app对象，UI会在下方显示
-app
+# 使用display()显示UI
+from IPython.display import display
+display(app)
 
 # ============================================================
 # 现在你可以在上方的UI中进行所有操作!
