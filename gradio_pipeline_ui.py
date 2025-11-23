@@ -1165,10 +1165,50 @@ def create_ui():
 
 if __name__ == "__main__":
     demo = create_ui()
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860,
-        share=True,              # Set to True for public URL (useful for Colab)
-        show_error=True,
-        debug=False
-    )
+
+    # Check if running in Colab
+    try:
+        import google.colab
+        IN_COLAB = True
+        print("✅ Colab环境确认")
+    except:
+        IN_COLAB = False
+        print("✅ 本地环境确认")
+
+    print("="*80)
+    print("🚀 股票预测Pipeline可视化 - Gradio UI")
+    print("="*80)
+
+    if IN_COLAB:
+        # Colab environment - use share=True for public URL
+        print("\n🌐 在Colab环境中启动Gradio...")
+        print("📝 注意: Gradio将生成一个公开访问链接")
+        demo.launch(
+            share=True,
+            debug=True,
+            show_error=True,
+            inline=False  # Use separate window
+        )
+    else:
+        # Local environment - try multiple ports
+        print("\n🌐 在本地环境中运行Gradio...")
+        for port in range(7860, 7870):
+            try:
+                print(f"尝试端口 {port}...")
+                demo.launch(
+                    server_name="127.0.0.1",
+                    server_port=port,
+                    share=False,
+                    debug=True,
+                    show_error=True,
+                    quiet=False
+                )
+                print(f"✅ 服务已启动!")
+                print(f"🔗 访问地址: http://localhost:{port}")
+                print("="*80)
+                break
+            except OSError:
+                print(f"❌ 端口 {port} 被占用,尝试下一个...")
+                continue
+        else:
+            print("❌ 所有端口都被占用! 请手动指定其他端口。")
