@@ -1127,6 +1127,623 @@ def create_step4_tab():
 
 
 # ============================================================================
+# 步骤5：SST模型推理与预测对比
+# ============================================================================
+
+def create_step5_tab():
+    """创建步骤5的Tab内容 - SST模型推理与预测对比"""
+
+    import os
+    import glob
+    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+    # ========== 辅助函数 ==========
+    def get_saved_models():
+        """获取已保存的SST模型列表"""
+        model_dir = 'saved_models/sst_models'
+        if not os.path.exists(model_dir):
+            return []
+        models = glob.glob(f"{model_dir}/*.pth")
+        return sorted(models, key=lambda x: os.path.getmtime(x), reverse=True)
+
+    def compute_r2_safe(y_true, y_pred):
+        """安全计算R²分数"""
+        try:
+            # 对每个输出维度分别计算R²，然后取平均
+            if len(y_true.shape) == 1:
+                y_true = y_true.reshape(-1, 1)
+            if len(y_pred.shape) == 1:
+                y_pred = y_pred.reshape(-1, 1)
+
+            r2_scores = []
+            for i in range(y_true.shape[1]):
+                r2 = r2_score(y_true[:, i], y_pred[:, i])
+                r2_scores.append(r2)
+            return np.mean(r2_scores), r2_scores
+        except:
+            return 0.0, [0.0] * y_true.shape[1]
+
+    # ========== 左侧：控制面板 ==========
+
+    # 📂 模型选择
+    model_header = widgets.HTML("<h4>📂 模型选择</h4>")
+
+    saved_models_dropdown = widgets.Dropdown(
+        options=get_saved_models(),
+        description='选择模型:',
+        style={'description_width': '120px'},
+        layout=widgets.Layout(width='450px')
+    )
+
+    refresh_models_btn = widgets.Button(
+        description='🔄 刷新',
+        button_style='info',
+        layout=widgets.Layout(width='100px')
+    )
+
+    load_model_btn = widgets.Button(
+        description='📂 加载模型',
+        button_style='success',
+        layout=widgets.Layout(width='150px')
+    )
+
+    model_info_output = widgets.Output()
+
+    # 📊 数据集选择
+    dataset_header = widgets.HTML("<h4>📊 数据集选择</h4>")
+
+    dataset_selector = widgets.Dropdown(
+        options=['训练集 (Train)', '验证集 (Val)', '测试集 (Test)', '全部数据 (All)'],
+        value='测试集 (Test)',
+        description='数据集:',
+        style={'description_width': '120px'},
+        layout=widgets.Layout(width='450px')
+    )
+
+    # 📏 时间范围选择
+    range_header = widgets.HTML("<h4>📏 时间范围选择</h4>")
+
+    start_idx = widgets.IntText(
+        value=0,
+        description='起始索引:',
+        style={'description_width': '120px'},
+        layout=widgets.Layout(width='250px')
+    )
+
+    end_idx = widgets.IntText(
+        value=100,
+        description='结束索引:',
+        style={'description_width': '120px'},
+        layout=widgets.Layout(width='250px')
+    )
+
+    use_full_range = widgets.Checkbox(
+        value=False,
+        description='使用全部数据',
+        style={'description_width': 'initial'},
+        layout=widgets.Layout(width='150px')
+    )
+
+    # 🚀 推理按钮
+    inference_button = widgets.Button(
+        description='▶️ 开始推理',
+        button_style='success',
+        layout=widgets.Layout(width='200px', height='50px')
+    )
+
+    # 💾 导出结果
+    export_header = widgets.HTML("<h4>💾 导出结果</h4>")
+
+    export_csv_btn = widgets.Button(
+        description='📊 导出CSV',
+        button_style='primary',
+        layout=widgets.Layout(width='150px')
+    )
+
+    export_json_btn = widgets.Button(
+        description='📋 导出JSON',
+        button_style='primary',
+        layout=widgets.Layout(width='150px')
+    )
+
+    export_png_btn = widgets.Button(
+        description='🖼️ 导出图表',
+        button_style='primary',
+        layout=widgets.Layout(width='150px')
+    )
+
+    # ========== 右侧：结果显示 ==========
+
+    status_header = widgets.HTML("<h4>📊 推理结果</h4>")
+
+    output_status = widgets.Textarea(
+        value='',
+        placeholder='推理结果将在此显示...',
+        layout=widgets.Layout(width='100%', height='400px'),
+        disabled=True
+    )
+
+    output_plot = widgets.Output()
+
+    # ========== 存储推理结果 ==========
+    inference_results = {
+        'y_true': None,
+        'y_pred_T': None,
+        'y_pred_T1': None,
+        'dataset_name': None,
+        'model_name': None,
+        'figure': None
+    }
+
+    # ========== 事件处理 ==========
+
+    def on_refresh_models(b):
+        """刷新模型列表"""
+        saved_models_dropdown.options = get_saved_models()
+
+    def on_load_model(b):
+        """加载已保存的模型"""
+        with model_info_output:
+            clear_output()
+            try:
+                selected_model = saved_models_dropdown.value
+                if not selected_model:
+                    print("❌ 请先选择一个模型")
+                    return
+
+                if not os.path.exists(selected_model):
+                    print(f"❌ 模型文件不存在: {selected_model}")
+                    return
+
+                # 加载模型
+                checkpoint = torch.load(selected_model, map_location=state.device)
+
+                # 检查数据是否已准备
+                if state.processed_data is None:
+                    print("❌ 请先完成数据预处理（步骤3）")
+                    return
+
+                num_features = state.processed_data['X_train'].shape[1]
+
+                model_config = checkpoint.get('model_config', {})
+                sst_model = DualOutputSST(
+                    num_boundary_sensors=num_features,
+                    num_target_sensors=1,
+                    d_model=model_config.get('d_model', 256),
+                    nhead=model_config.get('nhead', 16),
+                    num_layers=model_config.get('num_layers', 6),
+                    dropout=model_config.get('dropout', 0.1),
+                    enable_feature_extraction=True
+                ).to(state.device)
+
+                sst_model.load_state_dict(checkpoint['model_state_dict'])
+                sst_model.eval()
+                state.sst_model = sst_model
+
+                print(f"✅ 模型加载成功: {os.path.basename(selected_model)}")
+                print(f"\n📊 模型配置:")
+                print(f"  - d_model: {model_config.get('d_model')}")
+                print(f"  - nhead: {model_config.get('nhead')}")
+                print(f"  - num_layers: {model_config.get('num_layers')}")
+                print(f"  - dropout: {model_config.get('dropout')}")
+
+                if 'training_config' in checkpoint:
+                    train_config = checkpoint['training_config']
+                    print(f"\n🎯 训练配置:")
+                    print(f"  - epochs: {train_config.get('epochs')}")
+                    print(f"  - batch_size: {train_config.get('batch_size')}")
+                    print(f"  - learning_rate: {train_config.get('learning_rate')}")
+
+                if 'best_val_loss' in checkpoint:
+                    print(f"\n📈 最佳验证损失: {checkpoint['best_val_loss']:.6f}")
+
+            except Exception as e:
+                print(f"❌ 加载模型失败: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+    def on_inference_clicked(b):
+        """执行推理并生成对比可视化"""
+        log_buffer = []
+
+        def log(msg):
+            log_buffer.append(msg)
+            output_status.value = '\n'.join(log_buffer)
+
+        try:
+            if state.sst_model is None:
+                log("❌ 请先加载模型")
+                return
+
+            if state.processed_data is None:
+                log("❌ 请先完成数据预处理（步骤3）")
+                return
+
+            log("=" * 80)
+            log("🚀 开始模型推理")
+            log("=" * 80)
+            log("")
+
+            # 选择数据集
+            dataset_name = dataset_selector.value
+            data = state.processed_data
+
+            if '训练集' in dataset_name:
+                X = data['X_train']
+                y_T = data['y_T_train']
+                y_T1 = data['y_T1_train']
+                dataset_type = 'Train'
+            elif '验证集' in dataset_name:
+                X = data['X_val']
+                y_T = data['y_T_val']
+                y_T1 = data['y_T1_val']
+                dataset_type = 'Val'
+            elif '测试集' in dataset_name:
+                X = data['X_test']
+                y_T = data['y_T_test']
+                y_T1 = data['y_T1_test']
+                dataset_type = 'Test'
+            else:  # 全部数据
+                X = np.vstack([data['X_train'], data['X_val'], data['X_test']])
+                y_T = np.vstack([data['y_T_train'], data['y_T_val'], data['y_T1_test']])
+                y_T1 = np.vstack([data['y_T1_train'], data['y_T1_val'], data['y_T1_test']])
+                dataset_type = 'All'
+
+            log(f"📊 数据集: {dataset_name}")
+            log(f"📏 总样本数: {len(X):,}")
+
+            # 时间范围选择
+            if use_full_range.value:
+                start = 0
+                end = len(X)
+            else:
+                start = max(0, start_idx.value)
+                end = min(len(X), end_idx.value)
+
+            X_seg = X[start:end]
+            y_T_seg = y_T[start:end]
+            y_T1_seg = y_T1[start:end]
+
+            log(f"📏 推理范围: [{start}, {end})")
+            log(f"📈 样本数: {len(X_seg):,}")
+            log("")
+
+            # 执行推理
+            log("⏳ 正在执行推理...")
+            state.sst_model.eval()
+
+            with torch.no_grad():
+                X_tensor = torch.FloatTensor(X_seg).to(state.device)
+                pred_T, pred_T1 = state.sst_model(X_tensor)
+
+                y_pred_T = pred_T.cpu().numpy()
+                y_pred_T1 = pred_T1.cpu().numpy()
+
+            log("✅ 推理完成")
+            log("")
+
+            # 计算性能指标
+            log("📊 计算性能指标...")
+            log("")
+
+            # T日预测性能
+            mae_T = mean_absolute_error(y_T_seg, y_pred_T)
+            mse_T = mean_squared_error(y_T_seg, y_pred_T)
+            rmse_T = np.sqrt(mse_T)
+            r2_T, r2_T_per = compute_r2_safe(y_T_seg, y_pred_T)
+
+            # T+1日预测性能
+            mae_T1 = mean_absolute_error(y_T1_seg, y_pred_T1)
+            mse_T1 = mean_squared_error(y_T1_seg, y_pred_T1)
+            rmse_T1 = np.sqrt(mse_T1)
+            r2_T1, r2_T1_per = compute_r2_safe(y_T1_seg, y_pred_T1)
+
+            # 显示结果
+            log("=" * 80)
+            log("📈 T日预测性能")
+            log("=" * 80)
+            log(f"  MAE:  {mae_T:.6f}")
+            log(f"  MSE:  {mse_T:.6f}")
+            log(f"  RMSE: {rmse_T:.6f}")
+            log(f"  R²:   {r2_T:.4f}")
+            log("")
+
+            log("=" * 80)
+            log("📈 T+1日预测性能")
+            log("=" * 80)
+            log(f"  MAE:  {mae_T1:.6f}")
+            log(f"  MSE:  {mse_T1:.6f}")
+            log(f"  RMSE: {rmse_T1:.6f}")
+            log(f"  R²:   {r2_T1:.4f}")
+            log("")
+
+            # 方向准确率
+            direction_correct_T = np.sum(np.sign(y_T_seg) == np.sign(y_pred_T)) / len(y_T_seg) * 100
+            direction_correct_T1 = np.sum(np.sign(y_T1_seg) == np.sign(y_pred_T1)) / len(y_T1_seg) * 100
+
+            log("=" * 80)
+            log("🎯 方向准确率")
+            log("=" * 80)
+            log(f"  T日:   {direction_correct_T:.2f}%")
+            log(f"  T+1日: {direction_correct_T1:.2f}%")
+            log("")
+
+            # 保存结果
+            inference_results['y_true_T'] = y_T_seg
+            inference_results['y_true_T1'] = y_T1_seg
+            inference_results['y_pred_T'] = y_pred_T
+            inference_results['y_pred_T1'] = y_pred_T1
+            inference_results['dataset_name'] = dataset_type
+            inference_results['model_name'] = os.path.basename(saved_models_dropdown.value)
+            inference_results['start_idx'] = start
+            inference_results['end_idx'] = end
+            inference_results['metrics'] = {
+                'T': {'mae': mae_T, 'mse': mse_T, 'rmse': rmse_T, 'r2': r2_T, 'direction_acc': direction_correct_T},
+                'T1': {'mae': mae_T1, 'mse': mse_T1, 'rmse': rmse_T1, 'r2': r2_T1, 'direction_acc': direction_correct_T1}
+            }
+
+            log("✅ 性能指标计算完成")
+            log("")
+
+            # 生成可视化
+            log("🎨 生成可视化图表...")
+            with output_plot:
+                clear_output()
+
+                # 创建6个子图：时间序列(T, T+1)、散点图(T, T+1)、残差分布(T, T+1)
+                fig = plt.figure(figsize=(20, 12))
+                gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+
+                plot_samples = min(500, len(y_T_seg))
+
+                # ============ T日预测 ============
+
+                # 1. T日时间序列对比
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax1.plot(y_T_seg[:plot_samples], label='实际值', alpha=0.8, linewidth=2, color='green')
+                ax1.plot(y_pred_T[:plot_samples], label='预测值', alpha=0.7, linewidth=1.5, color='blue', linestyle='--')
+                ax1.set_title(f'T日预测对比 (R²={r2_T:.4f})', fontsize=14, fontweight='bold')
+                ax1.set_xlabel('样本索引', fontsize=11)
+                ax1.set_ylabel('收益率', fontsize=11)
+                ax1.legend(fontsize=10)
+                ax1.grid(True, alpha=0.3)
+
+                # 2. T日散点图
+                ax2 = fig.add_subplot(gs[1, 0])
+                ax2.scatter(y_T_seg, y_pred_T, alpha=0.5, s=10, color='blue')
+
+                # 添加对角线
+                min_val = min(y_T_seg.min(), y_pred_T.min())
+                max_val = max(y_T_seg.max(), y_pred_T.max())
+                ax2.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='完美预测')
+
+                ax2.set_title(f'T日预测散点图 (R²={r2_T:.4f})', fontsize=14, fontweight='bold')
+                ax2.set_xlabel('实际值', fontsize=11)
+                ax2.set_ylabel('预测值', fontsize=11)
+                ax2.legend(fontsize=10)
+                ax2.grid(True, alpha=0.3)
+
+                # 3. T日残差分布
+                ax3 = fig.add_subplot(gs[2, 0])
+                residuals_T = y_T_seg - y_pred_T
+                ax3.hist(residuals_T, bins=50, alpha=0.7, color='blue', edgecolor='black')
+                ax3.axvline(x=0, color='r', linestyle='--', linewidth=2, label='零残差')
+                ax3.set_title(f'T日残差分布 (均值={residuals_T.mean():.6f})', fontsize=14, fontweight='bold')
+                ax3.set_xlabel('残差', fontsize=11)
+                ax3.set_ylabel('频数', fontsize=11)
+                ax3.legend(fontsize=10)
+                ax3.grid(True, alpha=0.3)
+
+                # ============ T+1日预测 ============
+
+                # 4. T+1日时间序列对比
+                ax4 = fig.add_subplot(gs[0, 1])
+                ax4.plot(y_T1_seg[:plot_samples], label='实际值', alpha=0.8, linewidth=2, color='green')
+                ax4.plot(y_pred_T1[:plot_samples], label='预测值', alpha=0.7, linewidth=1.5, color='orange', linestyle='--')
+                ax4.set_title(f'T+1日预测对比 (R²={r2_T1:.4f})', fontsize=14, fontweight='bold')
+                ax4.set_xlabel('样本索引', fontsize=11)
+                ax4.set_ylabel('收益率', fontsize=11)
+                ax4.legend(fontsize=10)
+                ax4.grid(True, alpha=0.3)
+
+                # 5. T+1日散点图
+                ax5 = fig.add_subplot(gs[1, 1])
+                ax5.scatter(y_T1_seg, y_pred_T1, alpha=0.5, s=10, color='orange')
+
+                # 添加对角线
+                min_val = min(y_T1_seg.min(), y_pred_T1.min())
+                max_val = max(y_T1_seg.max(), y_pred_T1.max())
+                ax5.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='完美预测')
+
+                ax5.set_title(f'T+1日预测散点图 (R²={r2_T1:.4f})', fontsize=14, fontweight='bold')
+                ax5.set_xlabel('实际值', fontsize=11)
+                ax5.set_ylabel('预测值', fontsize=11)
+                ax5.legend(fontsize=10)
+                ax5.grid(True, alpha=0.3)
+
+                # 6. T+1日残差分布
+                ax6 = fig.add_subplot(gs[2, 1])
+                residuals_T1 = y_T1_seg - y_pred_T1
+                ax6.hist(residuals_T1, bins=50, alpha=0.7, color='orange', edgecolor='black')
+                ax6.axvline(x=0, color='r', linestyle='--', linewidth=2, label='零残差')
+                ax6.set_title(f'T+1日残差分布 (均值={residuals_T1.mean():.6f})', fontsize=14, fontweight='bold')
+                ax6.set_xlabel('残差', fontsize=11)
+                ax6.set_ylabel('频数', fontsize=11)
+                ax6.legend(fontsize=10)
+                ax6.grid(True, alpha=0.3)
+
+                # 总标题
+                fig.suptitle(f'SST模型推理结果对比 - {dataset_type}数据集',
+                           fontsize=16, fontweight='bold', y=0.995)
+
+                plt.tight_layout()
+                plt.show()
+
+                inference_results['figure'] = fig
+
+            log("✅ 可视化完成")
+
+        except Exception as e:
+            log("")
+            log(f"❌ 推理失败: {str(e)}")
+            import traceback
+            log(traceback.format_exc())
+
+    def on_export_csv(b):
+        """导出CSV结果"""
+        try:
+            if inference_results['y_true_T'] is None:
+                print("❌ 请先执行推理")
+                return
+
+            os.makedirs('saved_models/inference_results', exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            model_name = inference_results['model_name'].replace('.pth', '')
+            dataset_name = inference_results['dataset_name']
+
+            csv_filename = f'saved_models/inference_results/{model_name}_{dataset_name}_{timestamp}.csv'
+
+            # 构建CSV数据
+            csv_data = {
+                'sample_index': np.arange(inference_results['start_idx'], inference_results['end_idx']),
+                'y_T_true': inference_results['y_true_T'].flatten(),
+                'y_T_pred': inference_results['y_pred_T'].flatten(),
+                'y_T_residual': (inference_results['y_true_T'] - inference_results['y_pred_T']).flatten(),
+                'y_T1_true': inference_results['y_true_T1'].flatten(),
+                'y_T1_pred': inference_results['y_pred_T1'].flatten(),
+                'y_T1_residual': (inference_results['y_true_T1'] - inference_results['y_pred_T1']).flatten()
+            }
+
+            df_export = pd.DataFrame(csv_data)
+            df_export.to_csv(csv_filename, index=False)
+
+            print(f"✅ CSV已保存: {csv_filename}")
+
+        except Exception as e:
+            print(f"❌ 导出CSV失败: {str(e)}")
+
+    def on_export_json(b):
+        """导出JSON性能指标"""
+        try:
+            if inference_results['y_true_T'] is None:
+                print("❌ 请先执行推理")
+                return
+
+            os.makedirs('saved_models/inference_results', exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            model_name = inference_results['model_name'].replace('.pth', '')
+            dataset_name = inference_results['dataset_name']
+
+            json_filename = f'saved_models/inference_results/{model_name}_{dataset_name}_metrics_{timestamp}.json'
+
+            # 构建JSON数据
+            json_data = {
+                'model_name': inference_results['model_name'],
+                'dataset': inference_results['dataset_name'],
+                'sample_range': {
+                    'start': int(inference_results['start_idx']),
+                    'end': int(inference_results['end_idx']),
+                    'count': int(inference_results['end_idx'] - inference_results['start_idx'])
+                },
+                'metrics': {
+                    'T_day': {
+                        'MAE': float(inference_results['metrics']['T']['mae']),
+                        'MSE': float(inference_results['metrics']['T']['mse']),
+                        'RMSE': float(inference_results['metrics']['T']['rmse']),
+                        'R2': float(inference_results['metrics']['T']['r2']),
+                        'Direction_Accuracy': float(inference_results['metrics']['T']['direction_acc'])
+                    },
+                    'T1_day': {
+                        'MAE': float(inference_results['metrics']['T1']['mae']),
+                        'MSE': float(inference_results['metrics']['T1']['mse']),
+                        'RMSE': float(inference_results['metrics']['T1']['rmse']),
+                        'R2': float(inference_results['metrics']['T1']['r2']),
+                        'Direction_Accuracy': float(inference_results['metrics']['T1']['direction_acc'])
+                    }
+                },
+                'timestamp': timestamp
+            }
+
+            with open(json_filename, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2, ensure_ascii=False)
+
+            print(f"✅ JSON已保存: {json_filename}")
+
+        except Exception as e:
+            print(f"❌ 导出JSON失败: {str(e)}")
+
+    def on_export_png(b):
+        """导出PNG图表"""
+        try:
+            if inference_results['figure'] is None:
+                print("❌ 请先执行推理")
+                return
+
+            os.makedirs('saved_models/inference_results', exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            model_name = inference_results['model_name'].replace('.pth', '')
+            dataset_name = inference_results['dataset_name']
+
+            png_filename = f'saved_models/inference_results/{model_name}_{dataset_name}_{timestamp}.png'
+
+            inference_results['figure'].savefig(png_filename, dpi=150, bbox_inches='tight')
+
+            print(f"✅ 图表已保存: {png_filename}")
+
+        except Exception as e:
+            print(f"❌ 导出图表失败: {str(e)}")
+
+    # 绑定事件
+    refresh_models_btn.on_click(on_refresh_models)
+    load_model_btn.on_click(on_load_model)
+    inference_button.on_click(on_inference_clicked)
+    export_csv_btn.on_click(on_export_csv)
+    export_json_btn.on_click(on_export_json)
+    export_png_btn.on_click(on_export_png)
+
+    # ========== 组装界面 ==========
+
+    header = widgets.HTML("<h3>🔮 步骤5: SST模型推理与预测对比</h3>")
+
+    # 左侧控制面板
+    left_panel = widgets.VBox([
+        model_header,
+        widgets.HBox([saved_models_dropdown]),
+        widgets.HBox([refresh_models_btn, load_model_btn]),
+        model_info_output,
+        dataset_header,
+        dataset_selector,
+        range_header,
+        widgets.HBox([start_idx, end_idx]),
+        use_full_range,
+        widgets.HTML("<br>"),
+        inference_button,
+        widgets.HTML("<br>"),
+        export_header,
+        widgets.HBox([export_csv_btn, export_json_btn, export_png_btn])
+    ], layout=widgets.Layout(width='500px', padding='10px'))
+
+    # 右侧结果显示
+    right_panel = widgets.VBox([
+        status_header,
+        output_status,
+        widgets.HTML("<h4>📈 可视化对比</h4>"),
+        output_plot
+    ], layout=widgets.Layout(width='calc(100% - 520px)', padding='10px'))
+
+    # 整体布局
+    main_layout = widgets.HBox([left_panel, right_panel])
+
+    return widgets.VBox([
+        header,
+        main_layout
+    ])
+
+
+# ============================================================================
 # 创建说明Tab
 # ============================================================================
 
@@ -1205,16 +1822,18 @@ def create_ui():
     tab2 = create_step2_tab()
     tab3 = create_step3_tab()
     tab4 = create_step4_tab()
+    tab5 = create_step5_tab()
     help_tab = create_help_tab()
 
     # 创建Tab控件
     tabs = widgets.Tab()
-    tabs.children = [tab1, tab2, tab3, tab4, help_tab]
+    tabs.children = [tab1, tab2, tab3, tab4, tab5, help_tab]
     tabs.set_title(0, '📋 步骤1: 加载JSON')
     tabs.set_title(1, '📊 步骤2: 数据抓取')
     tabs.set_title(2, '🔄 步骤3: 数据预处理')
     tabs.set_title(3, '🧠 步骤4: SST训练')
-    tabs.set_title(4, '📖 使用说明')
+    tabs.set_title(4, '🔮 步骤5: 模型推理')
+    tabs.set_title(5, '📖 使用说明')
 
     # 创建标题
     title = widgets.HTML("""
